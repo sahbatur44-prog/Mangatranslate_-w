@@ -7,6 +7,9 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.Log
 import com.example.api.GeminiTranslator
+import com.example.api.TargetLanguage
+import com.example.api.SourceLanguage
+import com.example.api.OnDeviceTranslator
 import com.example.ocr.OcrManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,34 +25,42 @@ class TranslationPipeline(private val context: Context) {
         val originalBitmap: Bitmap,
         val translatedBitmap: Bitmap,
         val textBlocksCount: Int,
-        val savedFilePath: String? = null
+        val savedFilePath: String? = null,
+        val detectedAsJapanese: Boolean = true
     )
 
     suspend fun translateMangaPage(
         inputBitmap: Bitmap,
-        isJapanese: Boolean,
+        sourceLanguage: SourceLanguage,
         fontSizeMultiplier: Float = 1.0f,
         maskColor: Int = Color.WHITE,
-        isOfflineMode: Boolean = false
+        isOfflineMode: Boolean = false,
+        isDebugMode: Boolean = false,
+        targetLang: TargetLanguage = TargetLanguage.TURKISH
     ): TranslationResult = withContext(Dispatchers.Default) {
         Log.d("TranslationPipeline", "Starting manga page translation...")
 
         // Step 1: Perform on-device OCR
-        val ocrBlocks = ocrManager.detectText(inputBitmap, isJapanese)
-        if (ocrBlocks.isEmpty()) {
+        val (ocrBlocks, isActuallyJapanese) = ocrManager.detectText(inputBitmap, sourceLanguage, includeFiltered = isDebugMode)
+        val processableBlocks = ocrBlocks.filter { !it.isFiltered }
+        val filteredBlocks = ocrBlocks.filter { it.isFiltered }
+
+        if (processableBlocks.isEmpty() && filteredBlocks.isEmpty()) {
             Log.w("TranslationPipeline", "No text detected on the page.")
-            return@withContext TranslationResult(inputBitmap, inputBitmap, 0)
+            return@withContext TranslationResult(inputBitmap, inputBitmap, 0, null, isActuallyJapanese)
         }
 
         // Step 2: Extract text array for translation
-        val originalTexts = ocrBlocks.map { it.text }
+        val originalTexts = processableBlocks.map { it.text }
 
         // Step 3: Handle translation (either API or local offline simulator)
-        val translatedTexts = if (isOfflineMode) {
-            translator.translateTextsOffline(originalTexts)
+        val translatedTexts = if (originalTexts.isEmpty()) {
+            emptyList()
+        } else if (isOfflineMode) {
+            OnDeviceTranslator.translate(originalTexts, sourceLanguage, isActuallyJapanese, targetLang)
         } else {
-            val sourceLanguageName = if (isJapanese) "Japonca" else "İngilizce"
-            translator.translateTexts(originalTexts, sourceLanguageName)
+            val sourceLanguageName = if (isActuallyJapanese) "Japonca" else "İngilizce"
+            translator.translateTexts(originalTexts, sourceLanguageName, targetLang)
         }
 
         // Step 4: Create a mutable copy of the original bitmap to paint translations
@@ -66,9 +77,32 @@ class TranslationPipeline(private val context: Context) {
             style = Paint.Style.FILL
         }
 
+        val debugGreenPaint = Paint().apply {
+            color = Color.GREEN
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+
+        val debugRedPaint = Paint().apply {
+            color = Color.RED
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+
+        val debugOverlayPaint = Paint().apply {
+            color = Color.argb(40, 255, 0, 0)
+            style = Paint.Style.FILL
+        }
+
+        val debugTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+
         // Dynamic calculation of bubble colors or solid fallback
-        for (i in ocrBlocks.indices) {
-            val block = ocrBlocks[i]
+        for (i in processableBlocks.indices) {
+            val block = processableBlocks[i]
             val rect = block.boundingBox
             val translatedText = translatedTexts.getOrNull(i) ?: block.text
 
@@ -113,6 +147,53 @@ class TranslationPipeline(private val context: Context) {
             canvas.translate((rect.left + padding).toFloat(), verticalTranslation)
             staticLayout.draw(canvas)
             canvas.restore()
+
+            if (isDebugMode) {
+                canvas.drawRect(rect, debugGreenPaint)
+                val label = "KABUL #${i + 1}"
+                val labelWidth = debugTextPaint.measureText(label)
+                val labelHeight = 18f
+                canvas.drawRect(
+                    rect.left.toFloat(),
+                    (rect.top.toFloat() - labelHeight).coerceAtLeast(0f),
+                    rect.left.toFloat() + labelWidth + 8f,
+                    rect.top.toFloat(),
+                    Paint().apply { color = Color.parseColor("#1B5E20") }
+                )
+                canvas.drawText(
+                    label,
+                    rect.left.toFloat() + 4f,
+                    (rect.top.toFloat() - 4f).coerceAtLeast(12f),
+                    debugTextPaint
+                )
+            }
+        }
+
+        if (isDebugMode) {
+            for (i in filteredBlocks.indices) {
+                val block = filteredBlocks[i]
+                val rect = block.boundingBox
+                
+                canvas.drawRect(rect, debugRedPaint)
+                canvas.drawRect(rect, debugOverlayPaint)
+                
+                val label = "RED: ${block.filterReason}"
+                val labelWidth = debugTextPaint.measureText(label)
+                val labelHeight = 18f
+                canvas.drawRect(
+                    rect.left.toFloat(),
+                    (rect.top.toFloat() - labelHeight).coerceAtLeast(0f),
+                    rect.left.toFloat() + labelWidth + 8f,
+                    rect.top.toFloat(),
+                    Paint().apply { color = Color.parseColor("#B71C1C") }
+                )
+                canvas.drawText(
+                    label,
+                    rect.left.toFloat() + 4f,
+                    (rect.top.toFloat() - 4f).coerceAtLeast(12f),
+                    debugTextPaint
+                )
+            }
         }
 
         // Step 5: Save translated image to internal storage
@@ -135,8 +216,9 @@ class TranslationPipeline(private val context: Context) {
         return@withContext TranslationResult(
             originalBitmap = inputBitmap,
             translatedBitmap = outputBitmap,
-            textBlocksCount = ocrBlocks.size,
-            savedFilePath = file.absolutePath
+            textBlocksCount = processableBlocks.size,
+            savedFilePath = file.absolutePath,
+            detectedAsJapanese = isActuallyJapanese
         )
     }
 }

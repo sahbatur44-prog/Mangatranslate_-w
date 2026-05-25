@@ -25,6 +25,9 @@ interface TranslationHistoryDao {
     @Query("DELETE FROM translation_history WHERE id = :id")
     suspend fun deleteHistoryById(id: Int)
 
+    @Query("DELETE FROM translation_history WHERE filePath = :filePath")
+    suspend fun deleteHistoryByFilePath(filePath: String)
+
     @Query("DELETE FROM translation_history")
     suspend fun clearAllHistory()
 }
@@ -60,6 +63,10 @@ class TranslationRepository(private val dao: TranslationHistoryDao) {
 
     suspend fun deleteById(id: Int) {
         dao.deleteHistoryById(id)
+    }
+
+    suspend fun deleteByFilePath(filePath: String) {
+        dao.deleteHistoryByFilePath(filePath)
     }
 
     suspend fun clearAll() {

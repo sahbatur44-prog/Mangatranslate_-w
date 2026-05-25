@@ -81,38 +81,91 @@ object RetrofitClient {
 }
 
 class GeminiTranslator {
-    fun translateTextsOffline(texts: List<String>): List<String> {
+    fun translateTextsOffline(texts: List<String>, targetLang: TargetLanguage = TargetLanguage.TURKISH): List<String> {
         return texts.map { text ->
             val trimmed = text.trim().lowercase()
-            when {
-                trimmed.contains("what") || trimmed.contains("nani") -> "Ne?!"
-                trimmed.contains("no") && trimmed.length < 5 -> "Hayır!"
-                trimmed.contains("yes") || trimmed.contains("hai") -> "Evet!"
-                trimmed.contains("huh") || trimmed.contains("e?") -> "Ha?!"
-                trimmed.contains("stop") || trimmed.contains("yamete") -> "Dur!"
-                trimmed.contains("wait") || trimmed.contains("matte") -> "Bekle..."
-                trimmed.contains("know") -> "Biliyorum."
-                trimmed.contains("think") -> "Bence..."
-                trimmed.contains("really") -> "Gerçekten mi?"
-                trimmed.contains("thank") || trimmed.contains("arigat") -> "Teşekkürler!"
-                trimmed.contains("sorry") || trimmed.contains("gomen") -> "Üzgünüm!"
-                trimmed.contains("idiot") || trimmed.contains("baka") -> "Aptal!"
-                trimmed.contains("wow") || trimmed.contains("sugoi") -> "Harika!"
-                trimmed.contains("cute") || trimmed.contains("kawaii") -> "Sevimli!"
-                trimmed.contains("hello") || trimmed.contains("konnichi") -> "Merhaba!"
-                trimmed.contains("die") || trimmed.contains("shine") -> "Öl!"
-                trimmed.contains("why") || trimmed.contains("douse") -> "Neden?"
-                trimmed.contains("help") || trimmed.contains("tasukete") -> "Yardım et!"
-                trimmed.contains("run") || trimmed.contains("nigero") -> "Kaç!"
-                else -> {
-                    // Prepend elegant [Sanal] label to demonstrate speech bubble substitution
-                    "[Sanal: $text]"
+            when (targetLang) {
+                TargetLanguage.TURKISH -> {
+                    when {
+                        trimmed.contains("what") || trimmed.contains("nani") -> "Ne?!"
+                        trimmed.contains("no") && trimmed.length < 5 -> "Hayır!"
+                        trimmed.contains("yes") || trimmed.contains("hai") -> "Evet!"
+                        trimmed.contains("huh") || trimmed.contains("e?") -> "Ha?!"
+                        trimmed.contains("stop") || trimmed.contains("yamete") -> "Dur!"
+                        trimmed.contains("wait") || trimmed.contains("matte") -> "Bekle..."
+                        trimmed.contains("know") -> "Biliyorum."
+                        trimmed.contains("think") -> "Bence..."
+                        trimmed.contains("really") -> "Gerçekten mi?"
+                        trimmed.contains("thank") || trimmed.contains("arigat") -> "Teşekkürler!"
+                        trimmed.contains("sorry") || trimmed.contains("gomen") -> "Üzgünüm!"
+                        trimmed.contains("idiot") || trimmed.contains("baka") -> "Aptal!"
+                        trimmed.contains("wow") || trimmed.contains("sugoi") -> "Harika!"
+                        trimmed.contains("cute") || trimmed.contains("kawaii") -> "Sevimli!"
+                        trimmed.contains("hello") || trimmed.contains("konnichi") -> "Merhaba!"
+                        trimmed.contains("die") || trimmed.contains("shine") -> "Öl!"
+                        trimmed.contains("why") || trimmed.contains("douse") -> "Neden?"
+                        trimmed.contains("help") || trimmed.contains("tasukete") -> "Yardım et!"
+                        trimmed.contains("run") || trimmed.contains("nigero") -> "Kaç!"
+                        else -> "[Sanal: $text]"
+                    }
+                }
+                TargetLanguage.ENGLISH -> {
+                    when {
+                        trimmed.contains("what") || trimmed.contains("nani") -> "What?!"
+                        trimmed.contains("no") && trimmed.length < 5 -> "No!"
+                        trimmed.contains("yes") || trimmed.contains("hai") -> "Yes!"
+                        trimmed.contains("huh") || trimmed.contains("e?") -> "Huh?!"
+                        trimmed.contains("stop") || trimmed.contains("yamete") -> "Stop!"
+                        trimmed.contains("wait") || trimmed.contains("matte") -> "Wait..."
+                        trimmed.contains("know") -> "I know."
+                        trimmed.contains("think") -> "I think..."
+                        trimmed.contains("really") -> "Really?"
+                        trimmed.contains("thank") || trimmed.contains("arigat") -> "Thank you!"
+                        trimmed.contains("sorry") || trimmed.contains("gomen") -> "Sorry!"
+                        trimmed.contains("idiot") || trimmed.contains("baka") -> "Idiot!"
+                        trimmed.contains("wow") || trimmed.contains("sugoi") -> "Wow!"
+                        trimmed.contains("cute") || trimmed.contains("kawaii") -> "Cute!"
+                        trimmed.contains("hello") || trimmed.contains("konnichi") -> "Hello!"
+                        trimmed.contains("die") || trimmed.contains("shine") -> "Die!"
+                        trimmed.contains("why") || trimmed.contains("douse") -> "Why?"
+                        trimmed.contains("help") || trimmed.contains("tasukete") -> "Help me!"
+                        trimmed.contains("run") || trimmed.contains("nigero") -> "Run!"
+                        else -> "[Sanal: $text]"
+                    }
+                }
+                TargetLanguage.GERMAN -> {
+                    when {
+                        trimmed.contains("what") || trimmed.contains("nani") -> "Was?!"
+                        trimmed.contains("no") && trimmed.length < 5 -> "Nein!"
+                        trimmed.contains("yes") || trimmed.contains("hai") -> "Ja!"
+                        trimmed.contains("huh") || trimmed.contains("e?") -> "Hä?!"
+                        trimmed.contains("stop") || trimmed.contains("yamete") -> "Stopp!"
+                        trimmed.contains("wait") || trimmed.contains("matte") -> "Warte..."
+                        trimmed.contains("know") -> "Ich weiß."
+                        trimmed.contains("think") -> "Ich denke..."
+                        trimmed.contains("really") -> "Wirklich?"
+                        trimmed.contains("thank") || trimmed.contains("arigat") -> "Danke!"
+                        trimmed.contains("sorry") || trimmed.contains("gomen") -> "Es tut mir leid!"
+                        trimmed.contains("idiot") || trimmed.contains("baka") -> "Idiot!"
+                        trimmed.contains("wow") || trimmed.contains("sugoi") -> "Wahnsinn!"
+                        trimmed.contains("cute") || trimmed.contains("kawaii") -> "Süß!"
+                        trimmed.contains("hello") || trimmed.contains("konnichi") -> "Hallo!"
+                        trimmed.contains("die") || trimmed.contains("shine") -> "Stirb!"
+                        trimmed.contains("why") || trimmed.contains("douse") -> "Warum?"
+                        trimmed.contains("help") || trimmed.contains("tasukete") -> "Hilfe!"
+                        trimmed.contains("run") || trimmed.contains("nigero") -> "Lauf!"
+                        else -> "[Sanal: $text]"
+                    }
                 }
             }
         }
     }
 
-    suspend fun translateTexts(texts: List<String>, sourceLang: String): List<String> {
+    suspend fun translateTexts(
+        texts: List<String>,
+        sourceLang: String,
+        targetLang: TargetLanguage = TargetLanguage.TURKISH
+    ): List<String> {
         val apiKey = BuildConfig.GEMINI_API_KEY
         if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
             Log.e("GeminiTranslator", "API Key is missing or default placeholder value.")
@@ -124,7 +177,7 @@ class GeminiTranslator {
         val stringifiedList = texts.mapIndexed { index, s -> "\"$index\": \"$s\"" }.joinToString(",\n")
         val prompt = """
             Sana manga/webtoon konuşma balonlarından çıkarılmış metinlerin indeksli bir listesini veriyorum.
-            Bu metinleri bağlamlarına uygun olarak, konuşma akışını ve manga dil mantığını gözeterek son derece doğal, sürükleyici ve akıcı bir Türkçe'ye çevir.
+            Bu metinleri bağlamlarına uygun olarak, konuşma akışını ve manga dil mantığını gözeterek son derece doğal, sürükleyici ve akıcı bir ${targetLang.displayName} diline çevir.
             
             Giriş Metin Listesi:
             {
@@ -152,7 +205,7 @@ class GeminiTranslator {
                 temperature = 0.3f
             ),
             systemInstruction = Content(
-                parts = listOf(Part(text = "Sen profesyonel bir Japonca, Korece ve İngilizce manga/webtoon Türkçe çevirmenisin. Diyalogları doğal manga diliyle çevirirsin."))
+                parts = listOf(Part(text = "Sen profesyonel bir Japonca, Korece ve İngilizce manga/webtoon ${targetLang.displayName} çevirmenisin. Diyalogları doğal manga diliyle çevirirsin."))
             )
         )
 

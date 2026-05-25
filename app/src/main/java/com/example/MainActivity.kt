@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -51,8 +52,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerInputScope
 import coil.compose.AsyncImage
+import com.example.api.TargetLanguage
+import com.example.api.SourceLanguage
 import com.example.database.TranslationHistory
 import com.example.services.OverlayService
+import com.example.services.StorageManagerService
 import com.example.ui.MangaTranslatorViewModel
 import com.example.ui.TranslationUiState
 import com.example.ui.theme.MyApplicationTheme
@@ -66,6 +70,16 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Start the storage manager service to periodically clean up images older than 7 days
+        try {
+            startService(Intent(this, StorageManagerService::class.java).apply {
+                action = StorageManagerService.ACTION_START_CLEANUP
+            })
+            Log.d("MainActivity", "Successfully triggered StorageManagerService.")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Failed to start StorageManagerService: ${e.message}", e)
+        }
 
         setContent {
             MyApplicationTheme {
@@ -145,9 +159,12 @@ fun MangaTranslatorApp(
     val context = LocalContext.current
     val history by viewModel.historyList.collectAsState()
     val uiState by viewModel.translationUiState.collectAsState()
-    val isJapanese by viewModel.isJapaneseMode.collectAsState()
+    val selectedSourceLang by viewModel.selectedSourceLang.collectAsState()
     val fontSizeMultiplier by viewModel.fontSizeMultiplier.collectAsState()
     val isOfflineMode by viewModel.isOfflineMode.collectAsState()
+    val isDebugOverlayEnabled by viewModel.isDebugOverlayEnabled.collectAsState()
+    val selectedTargetLang by viewModel.selectedTargetLang.collectAsState()
+    val languagePacks by viewModel.languagePacks.collectAsState()
 
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var showActiveResultDialog by remember { mutableStateOf<TranslationUiState.Success?>(null) }
@@ -458,10 +475,9 @@ fun MangaTranslatorApp(
                 Divider(color = Color(0xFF334155))
 
                 // Source Language Configuration
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Column {
                         Text(
@@ -470,23 +486,130 @@ fun MangaTranslatorApp(
                             fontWeight = FontWeight.Medium,
                             color = Color.White
                         )
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = if (isJapanese) "Japonca (Manga)" else "İngilizce (Webtoon)",
+                            text = "Manga dili veya otomatik tespit seçeneği",
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8)
                         )
                     }
 
-                    Switch(
-                        checked = isJapanese,
-                        onCheckedChange = { viewModel.isJapaneseMode.value = it },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = Color(0xFF00ADB5),
-                            checkedTrackColor = Color(0xFF1E293B),
-                            uncheckedThumbColor = Color(0xFFE2E8F0),
-                            uncheckedTrackColor = Color(0xFF334155)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SourceLanguage.values().forEach { lang ->
+                            val isSelected = selectedSourceLang == lang
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSelected) Color(0xFF00ADB5) else Color(0xFF1E293B))
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (isSelected) Color(0xFF00ADB5) else Color(0xFF334155),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable {
+                                        viewModel.selectedSourceLang.value = lang
+                                    }
+                                    .padding(horizontal = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    val icon = when (lang) {
+                                        SourceLanguage.JAPANESE -> "🇯🇵"
+                                        SourceLanguage.ENGLISH -> "🇺🇸"
+                                        SourceLanguage.AUTO_DETECT -> "🔍"
+                                    }
+                                    Text(
+                                        text = icon,
+                                        fontSize = 16.sp
+                                    )
+                                    Text(
+                                        text = lang.displayName,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isSelected) Color.White else Color(0xFF94A3B8)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Divider(color = Color(0xFF334155))
+
+                // Target Language Configuration
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Column {
+                        Text(
+                            text = "Hedef Çeviri Dili",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
                         )
-                    )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Metinlerin çevrileceği hedef lisanı seçin",
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TargetLanguage.values().forEach { language ->
+                            val isSelected = selectedTargetLang == language
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSelected) Color(0xFF00ADB5) else Color(0xFF1E293B))
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (isSelected) Color(0xFF00ADB5) else Color(0xFF334155),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable {
+                                        viewModel.selectedTargetLang.value = language
+                                    }
+                                    .padding(horizontal = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    val flagIcon = when (language) {
+                                        TargetLanguage.TURKISH -> "🇹🇷"
+                                        TargetLanguage.ENGLISH -> "🇬🇧"
+                                        TargetLanguage.GERMAN -> "🇩🇪"
+                                    }
+                                    Text(
+                                        text = flagIcon,
+                                        fontSize = 16.sp
+                                    )
+                                    Text(
+                                        text = language.displayName,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isSelected) Color.White else Color(0xFF94A3B8)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Divider(color = Color(0xFF334155))
@@ -505,7 +628,7 @@ fun MangaTranslatorApp(
                             color = Color.White
                         )
                         Text(
-                            text = if (isOfflineMode) "Aktif (Çevrimdışı Akıllı Kelime Haritalayıcı)" else "Yapay Zeka Modu (Gemini Bulut API Anahtarı Gerektirir)",
+                            text = if (isOfflineMode) "Aktif (Google ML Kit Cihaz İçi Çeviri - İnternetsiz)" else "Yapay Zeka Modu (Gemini Bulut API Anahtarı Gerektirir)",
                             fontSize = 11.sp,
                             color = if (isOfflineMode) Color(0xFF00ADB5) else Color(0xFF94A3B8)
                         )
@@ -525,6 +648,40 @@ fun MangaTranslatorApp(
 
                 Divider(color = Color(0xFF334155))
 
+                // OCR Debug Overlay Toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "OCR Hata Ayıklama Katmanı",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                        Text(
+                            text = if (isDebugOverlayEnabled) "Aktif (Tespit edilen ve elenen tüm balonları görselde çerçeveler)" else "Kapalı (Sadece başarılı çevirileri gösterir)",
+                            fontSize = 11.sp,
+                            color = if (isDebugOverlayEnabled) Color(0xFF00ADB5) else Color(0xFF94A3B8)
+                        )
+                    }
+
+                    Switch(
+                        checked = isDebugOverlayEnabled,
+                        onCheckedChange = { viewModel.isDebugOverlayEnabled.value = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF00ADB5),
+                            checkedTrackColor = Color(0xFF1E293B),
+                            uncheckedThumbColor = Color(0xFFE2E8F0),
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
+                }
+
+                Divider(color = Color(0xFF334155))
+
                 // Font Expansion Sizer
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(
@@ -532,7 +689,7 @@ fun MangaTranslatorApp(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Türkçe Font Ölçekleyici",
+                            text = "Çeviri Font Ölçekleyici",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                             color = Color.White
@@ -554,6 +711,157 @@ fun MangaTranslatorApp(
                             inactiveTrackColor = Color(0xFF334155)
                         )
                     )
+                }
+
+                Divider(color = Color(0xFF334155))
+
+                // Language Model Pack Manager section
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Translate,
+                            contentDescription = "Language Model Manager",
+                            tint = Color(0xFF00ADB5),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Cihaz İçi Dil Modelleri",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "İnternetsiz çevirimler için gerekli olan lisan paketleri",
+                                fontSize = 11.sp,
+                                color = Color(0xFF94A3B8)
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        languagePacks.forEach { pack ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1E293B), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Text(
+                                        text = pack.flag,
+                                        fontSize = 20.sp
+                                    )
+                                    Column {
+                                        Text(
+                                            text = pack.name,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color.White
+                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = pack.size,
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF64748B)
+                                            )
+                                            Text(
+                                                text = "•",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF64748B)
+                                            )
+                                            if (pack.isDownloading) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(10.dp),
+                                                    strokeWidth = 1.5.dp,
+                                                    color = Color(0xFF00ADB5)
+                                                )
+                                                Spacer(modifier = Modifier.width(2.dp))
+                                                Text(
+                                                    text = "İşlem yapılıyor...",
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF00ADB5),
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                            } else if (pack.isDownloaded) {
+                                                Text(
+                                                    text = "İndirildi",
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF00ADB5),
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "İndirilmedi",
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF94A3B8)
+                                                )
+                                            }
+                                        }
+                                        pack.error?.let { err ->
+                                            Text(
+                                                text = err,
+                                                fontSize = 10.sp,
+                                                color = Color.Red,
+                                                lineHeight = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (!pack.isDownloading) {
+                                    if (pack.isDownloaded) {
+                                        // Delete Button
+                                        IconButton(
+                                            onClick = { viewModel.deleteLanguagePack(pack.code) },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "${pack.name} Sil",
+                                                tint = Color(0xFFEF4444),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    } else {
+                                        // Download Button
+                                        IconButton(
+                                            onClick = { viewModel.downloadLanguagePack(pack.code) },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Download,
+                                                contentDescription = "${pack.name} İndir",
+                                                tint = Color(0xFF00ADB5),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Box(modifier = Modifier.size(36.dp))
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -630,7 +938,7 @@ fun MangaTranslatorApp(
                         HistoryCardItem(
                             item = item,
                             onView = { viewHistoryItem = item },
-                            onDelete = { viewModel.deleteHistory(item.id) }
+                            onDelete = { viewModel.deleteHistory(item) }
                         )
                     }
                 }
@@ -760,7 +1068,7 @@ fun MangaTranslatorApp(
                         )
 
                         IconButton(onClick = {
-                            viewModel.deleteHistory(item.id)
+                            viewModel.deleteHistory(item)
                             viewHistoryItem = null
                         }) {
                             Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFEF4444))
@@ -848,7 +1156,7 @@ fun HistoryCardItem(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Türkçe Çeviri",
+                        text = "${item.targetLang} Çevirisi",
                         color = Color(0xFF00ADB5),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold
@@ -931,13 +1239,4 @@ fun ZoomableImage(
             )
         }
     }
-}
-
-// Support for older API versions or manual gesture detectors
-private suspend fun PointerInputScope.detectTapGestures(
-    onDoubleTap: (androidx.compose.ui.geometry.Offset) -> Unit
-) {
-    this.detectTapGestures(
-        onDoubleTap = onDoubleTap
-    )
 }
