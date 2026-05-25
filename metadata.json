@@ -1,0 +1,6 @@
+{
+  "name": "Manga Çevirmeni",
+  "description": "Ekrandaki manga ve webtoonları gerçek zamanlı çeviren, yüzen overlay destekli akıllı çevirici.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

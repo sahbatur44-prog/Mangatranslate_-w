@@ -1,0 +1,943 @@
+package com.example
+
+import android.app.ActivityManager
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
+import androidx.compose.animation.*
+import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerInputScope
+import coil.compose.AsyncImage
+import com.example.database.TranslationHistory
+import com.example.services.OverlayService
+import com.example.ui.MangaTranslatorViewModel
+import com.example.ui.TranslationUiState
+import com.example.ui.theme.MyApplicationTheme
+import com.example.utils.TranslationPipeline
+import java.io.InputStream
+
+class MainActivity : ComponentActivity() {
+
+    private val viewModel: MangaTranslatorViewModel by viewModels()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+
+        setContent {
+            MyApplicationTheme {
+                Scaffold(
+                    modifier = Modifier.fillMaxSize(),
+                    containerColor = Color(0xFF0F172A) // Sleek midnight background
+                ) { innerPadding ->
+                    MangaTranslatorApp(
+                        viewModel = viewModel,
+                        modifier = Modifier.padding(innerPadding),
+                        onStartOverlay = { startOverlayService() },
+                        onStopOverlay = { stopOverlayService() },
+                        isOverlayRunning = isServiceRunning(OverlayService::class.java)
+                    )
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        if (intent.action == OverlayService.ACTION_CAPTURE_SCREEN) {
+            Toast.makeText(this, "Yüzen Buton Tetiklendi! Çevirilecek Manga Ekran Görüntüsünü Seçin.", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun startOverlayService() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            // Toast permission guidance
+            Toast.makeText(this, "Yüzen widget için 'Diğer uygulamaların üzerinde göster' izni gerekiyor.", Toast.LENGTH_LONG).show()
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        } else {
+            val intent = Intent(this, OverlayService::class.java).apply {
+                action = OverlayService.ACTION_SHOW_WIDGET
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            Toast.makeText(this, "Yüzen Çeviri Servisi Başlatıldı!", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun stopOverlayService() {
+        val intent = Intent(this, OverlayService::class.java).apply {
+            action = OverlayService.ACTION_HIDE_WIDGET
+        }
+        startService(intent)
+        Toast.makeText(this, "Yüzen Çeviri Servisi Durduruldu.", Toast.LENGTH_SHORT).show()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun isServiceRunning(serviceClass: Class<*>): Boolean {
+        val manager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        for (service in manager.getRunningServices(Integer.MAX_VALUE)) {
+            if (serviceClass.name == service.service.className) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+@Composable
+fun MangaTranslatorApp(
+    viewModel: MangaTranslatorViewModel,
+    modifier: Modifier = Modifier,
+    onStartOverlay: () -> Unit,
+    onStopOverlay: () -> Unit,
+    isOverlayRunning: Boolean
+) {
+    val context = LocalContext.current
+    val history by viewModel.historyList.collectAsState()
+    val uiState by viewModel.translationUiState.collectAsState()
+    val isJapanese by viewModel.isJapaneseMode.collectAsState()
+    val fontSizeMultiplier by viewModel.fontSizeMultiplier.collectAsState()
+    val isOfflineMode by viewModel.isOfflineMode.collectAsState()
+
+    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var showActiveResultDialog by remember { mutableStateOf<TranslationUiState.Success?>(null) }
+    var viewHistoryItem by remember { mutableStateOf<TranslationHistory?>(null) }
+
+    // Floating Overlay Toggle State Action Helper
+    var localOverlayRunningState by remember { mutableStateOf(isOverlayRunning) }
+
+    // Media and picker setups
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            selectedImageUri = uri
+            try {
+                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                val bitmap = BitmapFactory.decodeStream(inputStream)
+                if (bitmap != null) {
+                    viewModel.translateLocalBitmap(bitmap)
+                } else {
+                    Toast.makeText(context, "Görsel formatı desteklenmiyor!", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Görsel yüklenirken hata oluştu!", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    LaunchedEffect(uiState) {
+        if (uiState is TranslationUiState.Success) {
+            showActiveResultDialog = uiState as TranslationUiState.Success
+        }
+    }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        // App Header Branding
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            shape = RoundedCornerShape(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Manga Çevirmeni",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF00ADB5), // Vivid cyber cyan accent
+                        fontFamily = FontFamily.SansSerif
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Yüzen Overlay & Gerçek Zamanlı Akıllı Manga/Webtoon Çevirici",
+                        fontSize = 12.sp,
+                        color = Color(0xFF94A3B8),
+                        lineHeight = 16.sp
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Default.Translate,
+                    contentDescription = "Translate Logo",
+                    tint = Color(0xFF00ADB5),
+                    modifier = Modifier.size(40.dp)
+                )
+            }
+        }
+
+        // Active State Display Card (Dynamic)
+        AnimatedVisibility(
+            visible = uiState is TranslationUiState.Loading || uiState is TranslationUiState.Error,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically()
+        ) {
+            when (val state = uiState) {
+                is TranslationUiState.Loading -> {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                        border = BorderStroke(1.dp, Color(0xFF00ADB5)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                color = Color(0xFF00ADB5),
+                                strokeWidth = 3.dp,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = "Çeviri Yapılıyor...",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = state.step,
+                                    fontSize = 12.sp,
+                                    color = Color(0xFF94A3B8)
+                                )
+                            }
+                        }
+                    }
+                }
+                is TranslationUiState.Error -> {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF451A1A)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ErrorOutline,
+                                    contentDescription = "Error icon",
+                                    tint = Color(0xFFF87171)
+                                )
+                                Text(
+                                    text = "Bir Hata Meydana Geldi",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFF87171),
+                                    fontSize = 14.sp
+                                )
+                            }
+                            Text(
+                                text = state.message,
+                                color = Color(0xFFFECACA),
+                                fontSize = 12.sp
+                            )
+                            Button(
+                                onClick = { viewModel.resetState() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF991B1B)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Text("Kapat", fontSize = 11.sp, color = Color.White)
+                            }
+                        }
+                    }
+                }
+                else -> {}
+            }
+        }
+
+        // Overlay Widget Control Panel
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "Konuşma Balonları Yüzen Servis",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+
+                Text(
+                    text = "Diğer okuyucu ve web tarayıcı uygulamaların üzerinde dairesel yüzen bir tuş açar. Tıkladığınızda o anki ekranı çevirebilirsiniz.",
+                    fontSize = 12.sp,
+                    color = Color(0xFF94A3B8),
+                    lineHeight = 18.sp
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    if (!localOverlayRunningState) {
+                        Button(
+                            onClick = {
+                                onStartOverlay()
+                                localOverlayRunningState = true
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00ADB5)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = "Start", tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Servisi Başlat", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                onStopOverlay()
+                                localOverlayRunningState = false
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = "Stop", tint = Color.White)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Servisi Durdur", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // Direct Picker Button
+                    OutlinedButton(
+                        onClick = { imagePickerLauncher.launch("image/*") },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        border = BorderStroke(1.dp, Color(0xFF00ADB5)),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF00ADB5))
+                    ) {
+                        Icon(Icons.Default.Image, contentDescription = "Picker", tint = Color(0xFF00ADB5))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Galeri Çevirisi", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // Translation Engine Configurations
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color(0xFF00ADB5))
+                    Text(
+                        text = "Çeviri Altyapı Ayarları",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+
+                // API Key Panel Alert notice
+                Surface(
+                    color = Color(0xFF334155),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VpnKey,
+                            contentDescription = "Key Icon",
+                            tint = Color(0xFFE2E8F0),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Gemini API Servis Anahtarı",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                            Text(
+                                text = "Bulut API anahtarınız AI Studio Sır Paneli (Secrets Panel) üzerinden otomatik aktarılır. Kod içerisine kesinlikle şifre yazılmaz.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFCBD5E1),
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+                }
+
+                Divider(color = Color(0xFF334155))
+
+                // Source Language Configuration
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = "Manga Orijinal Dili (OCR)",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                        Text(
+                            text = if (isJapanese) "Japonca (Manga)" else "İngilizce (Webtoon)",
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+
+                    Switch(
+                        checked = isJapanese,
+                        onCheckedChange = { viewModel.isJapaneseMode.value = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF00ADB5),
+                            checkedTrackColor = Color(0xFF1E293B),
+                            uncheckedThumbColor = Color(0xFFE2E8F0),
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
+                }
+
+                Divider(color = Color(0xFF334155))
+
+                // API Key-less Mode toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "API Anahtarsız Çeviri Modu",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                        Text(
+                            text = if (isOfflineMode) "Aktif (Çevrimdışı Akıllı Kelime Haritalayıcı)" else "Yapay Zeka Modu (Gemini Bulut API Anahtarı Gerektirir)",
+                            fontSize = 11.sp,
+                            color = if (isOfflineMode) Color(0xFF00ADB5) else Color(0xFF94A3B8)
+                        )
+                    }
+
+                    Switch(
+                        checked = isOfflineMode,
+                        onCheckedChange = { viewModel.isOfflineMode.value = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF00ADB5),
+                            checkedTrackColor = Color(0xFF1E293B),
+                            uncheckedThumbColor = Color(0xFFE2E8F0),
+                            uncheckedTrackColor = Color(0xFF334155)
+                        )
+                    )
+                }
+
+                Divider(color = Color(0xFF334155))
+
+                // Font Expansion Sizer
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Türkçe Font Ölçekleyici",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "%.1fx".format(fontSizeMultiplier),
+                            fontSize = 13.sp,
+                            color = Color(0xFF00ADB5),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Slider(
+                        value = fontSizeMultiplier,
+                        onValueChange = { viewModel.fontSizeMultiplier.value = it },
+                        valueRange = 0.5f..2.0f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFF00ADB5),
+                            activeTrackColor = Color(0xFF00ADB5),
+                            inactiveTrackColor = Color(0xFF334155)
+                        )
+                    )
+                }
+            }
+        }
+
+        // History Gallery Panel
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.History, contentDescription = "History", tint = Color(0xFF00ADB5))
+                    Text(
+                        text = "Geçmiş Çeviriler",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+
+                if (history.isNotEmpty()) {
+                    TextButton(onClick = { viewModel.clearAllHistory() }) {
+                        Text("Tümünü Temizle", color = Color(0xFFEF4444), fontSize = 12.sp)
+                    }
+                }
+            }
+
+            if (history.isEmpty()) {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(140.dp),
+                    color = Color(0xFF1E293B),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Inbox,
+                            contentDescription = "Empty",
+                            tint = Color(0xFF475569),
+                            modifier = Modifier.size(40.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Henüz çevrilmiş manga sayfanız bulunmuyor.",
+                            color = Color(0xFF64748B),
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = "Yukarıdan Galeri Çevirisini başlatarak başlayın!",
+                            color = Color(0xFF475569),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp), // Fixed heights to work inside Scrollable container
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(history) { item ->
+                        HistoryCardItem(
+                            item = item,
+                            onView = { viewHistoryItem = item },
+                            onDelete = { viewModel.deleteHistory(item.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // Modal Results Display Sheet (Active Translation Pipeline Success Viewer)
+    showActiveResultDialog?.let { success ->
+        Dialog(
+            onDismissRequest = {
+                showActiveResultDialog = null
+                viewModel.resetState()
+            },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = Color(0xFF0F172A)
+            ) {
+                var showOriginal by remember { mutableStateOf(false) }
+
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // Header controls
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF1E293B))
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        IconButton(onClick = {
+                            showActiveResultDialog = null
+                            viewModel.resetState()
+                        }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        }
+
+                        Text(
+                            text = "Çeviri Aracı",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+
+                        // Toggle button original vs translated
+                        Button(
+                            onClick = { showOriginal = !showOriginal },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (showOriginal) Color(0xFFEF4444) else Color(0xFF00ADB5)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = if (showOriginal) "Orijinal" else "Çeviri",
+                                fontSize = 12.sp,
+                                color = Color.White
+                            )
+                        }
+                    }
+
+                    // Main Image renderer with basic scaling zoom layout
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .background(Color.Black),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ZoomableImage(
+                            bitmap = if (showOriginal) success.result.originalBitmap else success.result.translatedBitmap
+                        )
+                        
+                        // Small info badge
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.Black.copy(alpha = 0.6f),
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(16.dp)
+                        ) {
+                            Text(
+                                text = "Bulunan konuşma balonu: ${success.result.textBlocksCount}. Görseli kaydırmak veya büyütmek için yakınlaştırın.",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Modal Detail Sheet for viewing historic items
+    viewHistoryItem?.let { item ->
+        Dialog(
+            onDismissRequest = { viewHistoryItem = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = Color(0xFF0F172A)
+            ) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF1E293B))
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        IconButton(onClick = { viewHistoryItem = null }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        }
+
+                        Text(
+                            text = item.title,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).padding(horizontal = 12.dp)
+                        )
+
+                        IconButton(onClick = {
+                            viewModel.deleteHistory(item.id)
+                            viewHistoryItem = null
+                        }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFEF4444))
+                        }
+                    }
+
+                    // Display historic saved PNG image
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .background(Color.Black),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ZoomableImage(imagePath = item.filePath)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HistoryCardItem(
+    item: TranslationHistory,
+    onView: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onView),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(110.dp)
+                    .background(Color(0xFF334155))
+            ) {
+                // Loading the local file inside internal storage
+                AsyncImage(
+                    model = item.filePath,
+                    contentDescription = "Translated Manga Crop",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+
+                // Tags labels overlay
+                Surface(
+                    color = Color(0xFF00ADB5),
+                    shape = RoundedCornerShape(bottomEnd = 8.dp),
+                    modifier = Modifier.align(Alignment.TopStart)
+                ) {
+                    Text(
+                        text = item.sourceLang,
+                        color = Color.White,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = item.title,
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Türkçe Çeviri",
+                        color = Color(0xFF00ADB5),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    IconButton(
+                        onClick = onDelete,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete Item",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * High-fidelity zoomable image component that supports gestures pinch to expand and drag.
+ */
+@Composable
+fun ZoomableImage(
+    bitmap: Bitmap? = null,
+    imagePath: String? = null
+) {
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+
+    val state = rememberTransformableState { zoomChange, offsetChange, _ ->
+        scale = (scale * zoomChange).coerceIn(1f, 5f)
+        offset += offsetChange
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                // Simple double tap reset gestures support
+                detectTapGestures(
+                    onDoubleTap = {
+                        scale = 1f
+                        offset = androidx.compose.ui.geometry.Offset.Zero
+                    }
+                )
+            }
+            .transformable(state = state)
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Translated zoom panel",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y
+                    )
+            )
+        } else if (imagePath != null) {
+            AsyncImage(
+                model = imagePath,
+                contentDescription = "Translated zoom crop",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y
+                    )
+            )
+        }
+    }
+}
+
+// Support for older API versions or manual gesture detectors
+private suspend fun PointerInputScope.detectTapGestures(
+    onDoubleTap: (androidx.compose.ui.geometry.Offset) -> Unit
+) {
+    this.detectTapGestures(
+        onDoubleTap = onDoubleTap
+    )
+}
