@@ -37,6 +37,9 @@ jobs:
         validate-wrappers: false
         cache-disabled: true
 
+    - name: Regenerate Gradle Wrapper Jar
+      run: gradle wrapper
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
