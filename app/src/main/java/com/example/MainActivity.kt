@@ -62,6 +62,7 @@ import com.example.ui.TranslationUiState
 import com.example.ui.theme.MyApplicationTheme
 import com.example.utils.TranslationPipeline
 import java.io.InputStream
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -166,6 +167,30 @@ fun MangaTranslatorApp(
     val selectedTargetLang by viewModel.selectedTargetLang.collectAsState()
     val languagePacks by viewModel.languagePacks.collectAsState()
 
+    val scrollState = rememberScrollState()
+    val coroutineScope = rememberCoroutineScope()
+
+    // Determine which language packs are needed for offline translation
+    val neededPackCodes = remember(selectedSourceLang, selectedTargetLang) {
+        val codes = mutableSetOf<String>()
+        when (selectedSourceLang) {
+            SourceLanguage.JAPANESE -> codes.add("ja")
+            SourceLanguage.ENGLISH -> codes.add("en")
+            SourceLanguage.AUTO_DETECT -> {
+                codes.add("ja")
+                codes.add("en")
+            }
+        }
+        codes.add(selectedTargetLang.code)
+        codes
+    }
+
+    val missingPacks = remember(languagePacks, neededPackCodes) {
+        languagePacks.filter { pack ->
+            neededPackCodes.contains(pack.code) && !pack.isDownloaded
+        }
+    }
+
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var showActiveResultDialog by remember { mutableStateOf<TranslationUiState.Success?>(null) }
     var viewHistoryItem by remember { mutableStateOf<TranslationHistory?>(null) }
@@ -202,7 +227,7 @@ fun MangaTranslatorApp(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
@@ -636,7 +661,15 @@ fun MangaTranslatorApp(
 
                     Switch(
                         checked = isOfflineMode,
-                        onCheckedChange = { viewModel.isOfflineMode.value = it },
+                        onCheckedChange = { checked ->
+                            viewModel.isOfflineMode.value = checked
+                            if (checked && missingPacks.isNotEmpty()) {
+                                coroutineScope.launch {
+                                    scrollState.animateScrollTo(scrollState.maxValue)
+                                }
+                                Toast.makeText(context, "Bazı gerekli dil paketleri eksik! Lütfen indirin.", Toast.LENGTH_LONG).show()
+                            }
+                        },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = Color(0xFF00ADB5),
                             checkedTrackColor = Color(0xFF1E293B),
@@ -644,6 +677,107 @@ fun MangaTranslatorApp(
                             uncheckedTrackColor = Color(0xFF334155)
                         )
                     )
+                }
+
+                if (isOfflineMode && missingPacks.isNotEmpty()) {
+                    Surface(
+                        color = Color(0xFF5A1C1C), // Deep warning crimson
+                        border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = "Eksik Paket Uyarısı",
+                                    tint = Color(0xFFEF4444),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Eksik Dil Paketleri Tespit Edildi!",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                            }
+                            Text(
+                                text = "Çevrimdışı modu kullanabilmek için seçtiğiniz kaynak/hedef dillere ait paketlerin indirilmesi gerekir. Eksik: " +
+                                        missingPacks.joinToString(", ") { "${it.flag} ${it.name}" },
+                                fontSize = 11.sp,
+                                color = Color(0xFFFCA5A5),
+                                lineHeight = 15.sp
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Scroll down to manager
+                                Button(
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            scrollState.animateScrollTo(scrollState.maxValue)
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFFDC2626),
+                                        contentColor = Color.White
+                                    ),
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDownward,
+                                        contentDescription = "Aşağı Git",
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Paket Yöneticisine Git",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                
+                                // Auto-download Button
+                                Button(
+                                    onClick = {
+                                        missingPacks.forEach { pack ->
+                                            viewModel.downloadLanguagePack(pack.code)
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = Color(0xFF10B981), // Emerald green
+                                        contentColor = Color.White
+                                    ),
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Download,
+                                        contentDescription = "Hepsini İndir",
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Tümünü Tek Tıkla İndir",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Divider(color = Color(0xFF334155))
@@ -751,10 +885,24 @@ fun MangaTranslatorApp(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         languagePacks.forEach { pack ->
+                            val isMissingNeededPack = isOfflineMode && missingPacks.any { it.code == pack.code }
+                            val packBorder = if (isMissingNeededPack) {
+                                BorderStroke(1.5.dp, Color(0xFFEF4444))
+                            } else {
+                                null
+                            }
+                            val packBackground = if (isMissingNeededPack) {
+                                Color(0xFF2D1616) // Warning deep red background
+                            } else {
+                                Color(0xFF1E293B)
+                            }
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Color(0xFF1E293B), RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(packBackground)
+                                    .then(if (packBorder != null) Modifier.border(packBorder, RoundedCornerShape(8.dp)) else Modifier)
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
@@ -769,12 +917,31 @@ fun MangaTranslatorApp(
                                         fontSize = 20.sp
                                     )
                                     Column {
-                                        Text(
-                                            text = pack.name,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            color = Color.White
-                                        )
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = pack.name,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color.White
+                                            )
+                                            if (isMissingNeededPack) {
+                                                Surface(
+                                                    color = Color(0xFFDC2626),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Eksik Paket",
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color.White,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(6.dp)
