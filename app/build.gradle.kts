@@ -122,3 +122,27 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
+
+val buildDirFile = layout.buildDirectory.get().asFile
+val rootDirFile = rootDir
+
+tasks.register("copyApkToRoot") {
+    val srcPath = buildDirFile.resolve("outputs/apk/debug/app-debug.apk").absolutePath
+    val destPath = File(rootDirFile, "manga_cevirmen.apk").absolutePath
+
+    doLast {
+        val srcFile = File(srcPath)
+        val destFile = File(destPath)
+        if (srcFile.exists()) {
+            srcFile.copyTo(destFile, overwrite = true)
+            logger.lifecycle("SUCCESS: APK successfully copied to project root as manga_cevirmen.apk")
+        } else {
+            logger.warn("WARNING: Source APK not found at: $srcPath")
+        }
+    }
+}
+
+tasks.matching { it.name == "assembleDebug" }.all {
+    finalizedBy("copyApkToRoot")
+}
+
