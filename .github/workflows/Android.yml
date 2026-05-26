@@ -1,0 +1,30 @@
+name: Android APK Derleyici
+on:
+  push:
+    branches: [ "main" ] # Kodların main branch'ine yüklendiğinde çalışır
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Kodları Çek
+        uses: actions/checkout@v4
+
+      - name: Java JDK 17 Kurulumu
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Gradle Yetkilerini Ayarla
+        run: chmod +x gradlew
+
+      - name: APK Derle (Debug)
+        run: ./gradlew assembleDebug
+
+      - name: APK Dosyasını Çıkart
+        uses: actions/upload-artifact@v4
+        with:
+          name: manga-translate-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
