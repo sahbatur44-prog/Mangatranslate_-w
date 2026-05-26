@@ -27,8 +27,13 @@ class OcrManager(private val context: Context) {
 
     fun determineLanguageAuto(bitmap: Bitmap): Boolean {
         Log.d("OcrManager", "Initiating pre-pass text density & directionality layout analysis on source image...")
+        val safeBitmap = if (bitmap.config == Bitmap.Config.HARDWARE) {
+            bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        } else {
+            bitmap
+        }
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        val image = InputImage.fromBitmap(bitmap, 0)
+        val image = InputImage.fromBitmap(safeBitmap, 0)
         return try {
             val result = Tasks.await(recognizer.process(image))
             

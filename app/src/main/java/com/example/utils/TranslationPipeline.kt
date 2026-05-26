@@ -64,7 +64,12 @@ class TranslationPipeline(private val context: Context) {
         }
 
         // Step 4: Create a mutable copy of the original bitmap to paint translations
-        val outputBitmap = inputBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val safeBitmap = if (inputBitmap.config == Bitmap.Config.HARDWARE) {
+            inputBitmap.copy(Bitmap.Config.ARGB_8888, false)
+        } else {
+            inputBitmap
+        }
+        val outputBitmap = safeBitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(outputBitmap)
 
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
