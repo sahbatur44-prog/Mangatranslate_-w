@@ -19,7 +19,14 @@ jobs:
       - name: Güncel Gradle Sistemini Kur
         uses: gradle/actions/setup-gradle@v3
         with:
-          gradle-version: current # Sistemdeki en güncel, kararlı Gradle sürümünü otomatik seçer
+          gradle-version: current
+
+      - name: Eksik Debug Keystore Dosyasını Otomatik Üret
+        run: |
+          mkdir -p ~/.android
+          keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          cp ~/.android/debug.keystore ./debug.keystore
+          echo "Debug anahtarı başarıyla oluşturuldu ve proje dizinine kopyalandı."
 
       - name: Doğrudan Sistem Gradle'ı ile APK Derle
         run: gradle assembleDebug --no-daemon --no-build-cache
@@ -29,4 +36,3 @@ jobs:
         with:
           name: manga-translate-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
-          
