@@ -16,18 +16,13 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Eksik Gradle Dosyalarını Otomatik Üret
-        run: |
-          if [ ! -f gradlew ]; then
-            echo "gradlew bulunamadı, yeniden oluşturuluyor..."
-            gradle wrapper --gradle-version 8.2
-          fi
+      - name: Güncel Gradle Sistemini Kur
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: current # Sistemdeki en güncel, kararlı Gradle sürümünü otomatik seçer
 
-      - name: Gradle Yetkilerini Ayarla
-        run: chmod +x gradlew
-
-      - name: APK Derle (Temiz ve Önbelleksiz Kurulum)
-        run: ./gradlew assembleDebug --no-daemon --no-build-cache
+      - name: Doğrudan Sistem Gradle'ı ile APK Derle
+        run: gradle assembleDebug --no-daemon --no-build-cache
 
       - name: APK Dosyasını Çıkart
         uses: actions/upload-artifact@v4
