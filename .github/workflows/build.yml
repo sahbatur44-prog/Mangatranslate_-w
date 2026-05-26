@@ -21,7 +21,6 @@ jobs:
 
       - name: Debug Keystore Oluştur
         run: |
-          mkdir -p "$GITHUB_WORKSPACE"
           keytool -genkey -v \
             -keystore "$GITHUB_WORKSPACE/debug.keystore" \
             -storepass android \
@@ -31,16 +30,12 @@ jobs:
             -keysize 2048 \
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
-          echo "✅ debug.keystore oluşturuldu: $GITHUB_WORKSPACE/debug.keystore"
-          ls -la "$GITHUB_WORKSPACE/debug.keystore"
 
       - name: Gradle Wrapper İzni Ver
         run: chmod +x ./gradlew
 
       - name: APK Derle
         run: ./gradlew assembleDebug --no-daemon --stacktrace
-        env:
-          GRADLE_OPTS: "-Dorg.gradle.daemon=false"
 
       - name: APK Dosyasını Çıkart
         uses: actions/upload-artifact@v4
