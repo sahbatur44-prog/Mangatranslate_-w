@@ -59,6 +59,29 @@ class MangaTranslatorViewModel(application: Application) : AndroidViewModel(appl
 
     private val prefs = application.getSharedPreferences("manga_translator_prefs", Context.MODE_PRIVATE)
 
+    private val _translationUiState = MutableStateFlow<TranslationUiState>(TranslationUiState.Idle)
+    val translationUiState: StateFlow<TranslationUiState> = _translationUiState
+
+    // Configurations state flows
+    val selectedSourceLang = MutableStateFlow(
+        try {
+            SourceLanguage.valueOf(prefs.getString("source_lang", SourceLanguage.JAPANESE.name) ?: SourceLanguage.JAPANESE.name)
+        } catch(e: Exception) {
+            SourceLanguage.JAPANESE
+        }
+    ) // Source language selection for OCR
+    val fontSizeMultiplier = MutableStateFlow(prefs.getFloat("font_size_multiplier", 1.0f)) // Sizing scalar for Canvas paint
+    val isOfflineMode = MutableStateFlow(prefs.getBoolean("is_offline_mode", false)) // Toggle between cloud Gemini or Offline/Sanal mapper
+    val isDebugOverlayEnabled = MutableStateFlow(prefs.getBoolean("is_debug_overlay_enabled", false)) // Toggle debugging visual border boxes
+    val selectedTargetLang = MutableStateFlow(
+        try {
+            TargetLanguage.valueOf(prefs.getString("target_lang", TargetLanguage.TURKISH.name) ?: TargetLanguage.TURKISH.name)
+        } catch(e: Exception) {
+            TargetLanguage.TURKISH
+        }
+    ) // Selected target language for translations
+    val autoOfflineFallbackAlert = MutableStateFlow<String?>(null)
+
     init {
         val database = AppDatabase.getDatabase(application)
         repository = TranslationRepository(database.translationHistoryDao())
@@ -195,29 +218,6 @@ class MangaTranslatorViewModel(application: Application) : AndroidViewModel(appl
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
-
-    private val _translationUiState = MutableStateFlow<TranslationUiState>(TranslationUiState.Idle)
-    val translationUiState: StateFlow<TranslationUiState> = _translationUiState
-
-    // Configurations state flows
-    val selectedSourceLang = MutableStateFlow(
-        try {
-            SourceLanguage.valueOf(prefs.getString("source_lang", SourceLanguage.JAPANESE.name) ?: SourceLanguage.JAPANESE.name)
-        } catch(e: Exception) {
-            SourceLanguage.JAPANESE
-        }
-    ) // Source language selection for OCR
-    val fontSizeMultiplier = MutableStateFlow(prefs.getFloat("font_size_multiplier", 1.0f)) // Sizing scalar for Canvas paint
-    val isOfflineMode = MutableStateFlow(prefs.getBoolean("is_offline_mode", false)) // Toggle between cloud Gemini or Offline/Sanal mapper
-    val isDebugOverlayEnabled = MutableStateFlow(prefs.getBoolean("is_debug_overlay_enabled", false)) // Toggle debugging visual border boxes
-    val selectedTargetLang = MutableStateFlow(
-        try {
-            TargetLanguage.valueOf(prefs.getString("target_lang", TargetLanguage.TURKISH.name) ?: TargetLanguage.TURKISH.name)
-        } catch(e: Exception) {
-            TargetLanguage.TURKISH
-        }
-    ) // Selected target language for translations
-    val autoOfflineFallbackAlert = MutableStateFlow<String?>(null)
 
     private fun hasInternetConnection(): Boolean {
         val connectivityManager = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
