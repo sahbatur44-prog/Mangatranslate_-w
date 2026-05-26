@@ -76,10 +76,16 @@ class ScreenCaptureActivity : Activity() {
 
     private fun startScreenCapture(resultCode: Int, data: Intent) {
         try {
+            // Inform OverlayService to elevate foreground service type to media projection first
+            val startFgsIntent = Intent(this, OverlayService::class.java).apply {
+                action = OverlayService.ACTION_START_MEDIA_PROJECTION
+            }
+            startService(startFgsIntent)
+
             mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, data)
             if (mediaProjection == null) {
                 Toast.makeText(this, "Medya projeksiyonu başlatılamadı.", Toast.LENGTH_SHORT).show()
-                finish()
+                cleanupAndFinish()
                 return
             }
 
@@ -198,6 +204,17 @@ class ScreenCaptureActivity : Activity() {
         } catch (e: Exception) {
             Log.e(TAG, "Error cleaning up screen capture components: ${e.message}")
         }
+        
+        try {
+            // Signal OverlayService to demote its foreground service type back to normal
+            val stopFgsIntent = Intent(this, OverlayService::class.java).apply {
+                action = OverlayService.ACTION_STOP_MEDIA_PROJECTION
+            }
+            startService(stopFgsIntent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed signaling demote FGS type: ${e.message}")
+        }
+        
         finish()
     }
 

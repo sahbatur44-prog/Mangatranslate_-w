@@ -44,6 +44,7 @@ class OverlayService : Service() {
     private var translationResultOverlay: View? = null
     
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private var isTranslationLoading = false
 
     companion object {
         private const val CHANNEL_ID = "MangaTranslatorChannel"
@@ -52,21 +53,18 @@ class OverlayService : Service() {
         const val ACTION_HIDE_WIDGET = "com.example.action.HIDE_WIDGET"
         const val ACTION_CAPTURE_SCREEN = "com.example.action.CAPTURE_SCREEN"
         const val ACTION_PROCESS_TRANSLATION = "com.example.action.PROCESS_TRANSLATION"
+        const val ACTION_START_MEDIA_PROJECTION = "com.example.action.START_MEDIA_PROJECTION"
+        const val ACTION_STOP_MEDIA_PROJECTION = "com.example.action.STOP_MEDIA_PROJECTION"
 
         @Volatile
         private var capturedScreenBitmap: Bitmap? = null
 
+        val isRunningState = kotlinx.coroutines.flow.MutableStateFlow(false)
+
         fun setCapturedBitmap(bitmap: Bitmap) {
             synchronized(this) {
-                val old = capturedScreenBitmap
                 capturedScreenBitmap = bitmap
-                if (old != null && old != bitmap && !old.isRecycled) {
-                    try {
-                        old.recycle()
-                    } catch (e: Exception) {
-                        Log.e("OverlayService", "Failed to recycle old screen capture bitmap", e)
-                    }
-                }
+                // GC handles old bitmap recycling safely to avoid canvas recycled crashers in result view
             }
         }
     }
@@ -75,20 +73,32 @@ class OverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                createNotification("Manga Çevirmeni Arka Planda Çalışıyor"),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                createNotification("Manga Çevirmeni Arka Planda Çalışıyor"),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, createNotification("Manga Çevirmeni Arka Planda Çalışıyor"))
+        updateForegroundServiceType(useMediaProjection = false)
+        isRunningState.value = true
+    }
+
+    private fun updateForegroundServiceType(useMediaProjection: Boolean) {
+        val notification = createNotification("Manga Çevirmeni Arka Planda Çalışıyor")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                val type = if (useMediaProjection) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                }
+                startForeground(NOTIFICATION_ID, notification, type)
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val type = if (useMediaProjection) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                } else {
+                    0
+                }
+                startForeground(NOTIFICATION_ID, notification, type)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e("OverlayService", "Failed to update foreground service type to $useMediaProjection: ${e.message}", e)
         }
     }
 
@@ -108,8 +118,14 @@ class OverlayService : Service() {
                 if (bitmapToTranslate != null) {
                     processScreenTranslation(bitmapToTranslate)
                 } else {
-                    Toast.makeText(this, "Yakalama hatası! Görsel yüklenemedi.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(applicationContext, "Yakalama hatası! Görsel yüklenemedi.", Toast.LENGTH_SHORT).show()
                 }
+            }
+            ACTION_START_MEDIA_PROJECTION -> {
+                updateForegroundServiceType(useMediaProjection = true)
+            }
+            ACTION_STOP_MEDIA_PROJECTION -> {
+                updateForegroundServiceType(useMediaProjection = false)
             }
         }
         return START_STICKY
@@ -219,6 +235,10 @@ class OverlayService : Service() {
     private var lastTriggerTime = 0L
 
     private fun triggerScreenTranslation() {
+        if (isTranslationLoading) {
+            Toast.makeText(applicationContext, "Çeviri işlemi zaten devam ediyor...", Toast.LENGTH_SHORT).show()
+            return
+        }
         val now = System.currentTimeMillis()
         if (now - lastTriggerTime < 1500) {
             Log.d("OverlayService", "Debounced screen capture request to avoid overlapping triggers.")
@@ -232,6 +252,8 @@ class OverlayService : Service() {
     }
 
     private fun processScreenTranslation(bitmap: Bitmap) {
+        if (isTranslationLoading) return
+        isTranslationLoading = true
         showLoadingOverlay()
         
         serviceScope.launch {
@@ -278,7 +300,7 @@ class OverlayService : Service() {
 
                 if (result.textBlocksCount == 0) {
                     hideLoadingOverlay()
-                    Toast.makeText(this@OverlayService, "Ekran üzerinde çevrilecek metin tespit edilemedi!", Toast.LENGTH_LONG).show()
+                    Toast.makeText(applicationContext, "Ekran üzerinde çevrilecek metin tespit edilemedi!", Toast.LENGTH_LONG).show()
                 } else {
                     hideLoadingOverlay()
                     showTranslationResultOverlay(result)
@@ -286,7 +308,9 @@ class OverlayService : Service() {
             } catch (e: Exception) {
                 Log.e("OverlayService", "Background page translation failed", e)
                 hideLoadingOverlay()
-                Toast.makeText(this@OverlayService, "Çeviri hatası: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                Toast.makeText(applicationContext, "Çeviri hatası: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+            } finally {
+                isTranslationLoading = false
             }
         }
     }
@@ -613,6 +637,8 @@ class OverlayService : Service() {
     private fun hideTranslationResultOverlay() {
         translationResultOverlay?.let {
             try {
+                it.setOnTouchListener(null)
+                it.setOnKeyListener(null)
                 windowManager.removeView(it)
             } catch (e: Exception) {
                 Log.e("OverlayService", "Error removing translation overlay", e)
@@ -625,6 +651,7 @@ class OverlayService : Service() {
         floatingView?.let {
             if (isFloatingWidgetVisible) {
                 try {
+                    it.setOnTouchListener(null)
                     windowManager.removeView(it)
                 } catch (e: Exception) {
                     Log.e("OverlayService", "Error removing overlay view: ${e.message}")
@@ -684,6 +711,7 @@ class OverlayService : Service() {
         hideFloatingWidget()
         hideLoadingOverlay()
         hideTranslationResultOverlay()
+        isRunningState.value = false
         super.onDestroy()
     }
 

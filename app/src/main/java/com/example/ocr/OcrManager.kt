@@ -23,7 +23,8 @@ data class OcrBlock(
     val filterReason: String = ""
 )
 
-class OcrManager(private val context: Context) {
+class OcrManager(context: Context) {
+    private val appContext = context.applicationContext
 
     fun determineLanguageAuto(bitmap: Bitmap): Boolean {
         Log.d("OcrManager", "Initiating pre-pass text density & directionality layout analysis on source image...")
@@ -157,8 +158,13 @@ class OcrManager(private val context: Context) {
 
     fun preprocessBitmapForOcr(src: Bitmap): Bitmap {
         Log.d("OcrManager", "Applying grayscale high-contrast pre-processing for better OCR...")
-        val width = src.width
-        val height = src.height
+        val safeSrc = if (src.config == Bitmap.Config.HARDWARE) {
+            src.copy(Bitmap.Config.ARGB_8888, false)
+        } else {
+            src
+        }
+        val width = safeSrc.width
+        val height = safeSrc.height
         val dest = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(dest)
         val paint = Paint().apply {
@@ -176,7 +182,12 @@ class OcrManager(private val context: Context) {
             }
             colorFilter = ColorMatrixColorFilter(colorMatrix)
         }
-        canvas.drawBitmap(src, 0f, 0f, paint)
+        canvas.drawBitmap(safeSrc, 0f, 0f, paint)
+        if (safeSrc != src) {
+            try {
+                safeSrc.recycle()
+            } catch (ignored: Exception) {}
+        }
         return dest
     }
 

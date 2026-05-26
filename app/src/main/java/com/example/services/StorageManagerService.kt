@@ -32,25 +32,19 @@ class StorageManagerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.d(TAG, "StorageManagerService onStartCommand with action: ${intent?.action}")
-        startPeriodicCleanup()
-        return START_STICKY
+        runSingleCleanup()
+        return START_NOT_STICKY
     }
 
-    private fun startPeriodicCleanup() {
-        if (periodicJob?.isActive == true) {
-            Log.d(TAG, "Periodic cleanup job is already active.")
-            return
-        }
-
-        Log.d(TAG, "Initializing periodic cleanup job.")
-        periodicJob = serviceScope.launch {
-            while (isActive) {
-                try {
-                    performCleanup()
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error during direct file cleanup: ${e.message}", e)
-                }
-                delay(CHECK_INTERVAL_MS)
+    private fun runSingleCleanup() {
+        serviceScope.launch {
+            try {
+                performCleanup()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during direct file cleanup: ${e.message}", e)
+            } finally {
+                Log.d(TAG, "StorageManagerService cleanup complete. Stopping service.")
+                stopSelf()
             }
         }
     }

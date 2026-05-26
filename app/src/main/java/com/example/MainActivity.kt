@@ -88,12 +88,13 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     containerColor = Color(0xFF0F172A) // Sleek midnight background
                 ) { innerPadding ->
+                    val isOverlayRunning by OverlayService.isRunningState.collectAsState()
                     MangaTranslatorApp(
                         viewModel = viewModel,
                         modifier = Modifier.padding(innerPadding),
                         onStartOverlay = { startOverlayService() },
                         onStopOverlay = { stopOverlayService() },
-                        isOverlayRunning = isServiceRunning(OverlayService::class.java)
+                        isOverlayRunning = isOverlayRunning
                     )
                 }
             }
@@ -150,17 +151,6 @@ class MainActivity : ComponentActivity() {
         }
         startService(intent)
         Toast.makeText(this, "Yüzen Çeviri Servisi Durduruldu.", Toast.LENGTH_SHORT).show()
-    }
-
-    @Suppress("DEPRECATION")
-    private fun isServiceRunning(serviceClass: Class<*>): Boolean {
-        val manager = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        for (service in manager.getRunningServices(Integer.MAX_VALUE)) {
-            if (serviceClass.name == service.service.className) {
-                return true
-            }
-        }
-        return false
     }
 }
 
@@ -229,8 +219,9 @@ fun MangaTranslatorApp(
         if (uri != null) {
             selectedImageUri = uri
             try {
-                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-                val bitmap = BitmapFactory.decodeStream(inputStream)
+                val bitmap = context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                    BitmapFactory.decodeStream(inputStream)
+                }
                 if (bitmap != null) {
                     viewModel.translateLocalBitmap(bitmap)
                 } else {

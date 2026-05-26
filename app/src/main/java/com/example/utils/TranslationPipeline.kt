@@ -16,9 +16,10 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
-class TranslationPipeline(private val context: Context) {
+class TranslationPipeline(context: Context) {
 
-    private val ocrManager = OcrManager(context)
+    private val appContext = context.applicationContext
+    private val ocrManager = OcrManager(appContext)
     private val translator = GeminiTranslator()
 
     data class TranslationResult(
@@ -70,6 +71,11 @@ class TranslationPipeline(private val context: Context) {
             inputBitmap
         }
         val outputBitmap = safeBitmap.copy(Bitmap.Config.ARGB_8888, true)
+        if (safeBitmap != inputBitmap) {
+            try {
+                safeBitmap.recycle()
+            } catch (ignored: Exception) {}
+        }
         val canvas = Canvas(outputBitmap)
 
         val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -211,7 +217,7 @@ class TranslationPipeline(private val context: Context) {
         }
 
         // Step 5: Save translated image to internal storage
-        val directory = File(context.filesDir, "translated_pages")
+        val directory = File(appContext.filesDir, "translated_pages")
         if (!directory.exists()) {
             directory.mkdirs()
         }

@@ -168,7 +168,9 @@ class MangaTranslatorViewModel(application: Application) : AndroidViewModel(appl
                 kotlinx.coroutines.delay(2000)
                 val modelManager = RemoteModelManager.getInstance()
                 val downloadedModels = try {
-                    com.google.android.gms.tasks.Tasks.await(modelManager.getDownloadedModels(TranslateRemoteModel::class.java))
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.google.android.gms.tasks.Tasks.await(modelManager.getDownloadedModels(TranslateRemoteModel::class.java))
+                    }
                 } catch (e: Exception) {
                     null
                 }
@@ -310,10 +312,12 @@ class MangaTranslatorViewModel(application: Application) : AndroidViewModel(appl
     fun deleteHistory(item: TranslationHistory) {
         viewModelScope.launch {
             try {
-                val file = java.io.File(item.filePath)
-                if (file.exists()) {
-                    file.delete()
-                    Log.d("MangaTranslatorVM", "Successfully deleted translated page image: ${item.filePath}")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val file = java.io.File(item.filePath)
+                    if (file.exists()) {
+                        file.delete()
+                        Log.d("MangaTranslatorVM", "Successfully deleted translated page image: ${item.filePath}")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("MangaTranslatorVM", "Failed to delete file on disk: ${item.filePath}", e)
@@ -325,12 +329,14 @@ class MangaTranslatorViewModel(application: Application) : AndroidViewModel(appl
     fun clearAllHistory() {
         viewModelScope.launch {
             try {
-                val directory = java.io.File(getApplication<Application>().filesDir, "translated_pages")
-                if (directory.exists() && directory.isDirectory) {
-                    directory.listFiles()?.forEach { file ->
-                        file.delete()
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val directory = java.io.File(getApplication<Application>().filesDir, "translated_pages")
+                    if (directory.exists() && directory.isDirectory) {
+                        directory.listFiles()?.forEach { file ->
+                            file.delete()
+                        }
+                        Log.d("MangaTranslatorVM", "Successfully cleared translated_pages files on disk.")
                     }
-                    Log.d("MangaTranslatorVM", "Successfully cleared translated_pages files on disk.")
                 }
             } catch (e: Exception) {
                 Log.e("MangaTranslatorVM", "Failed to clear physical translated pages directory", e)
