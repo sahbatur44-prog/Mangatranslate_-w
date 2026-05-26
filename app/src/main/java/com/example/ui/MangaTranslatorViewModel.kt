@@ -1,6 +1,10 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
 import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -180,17 +184,62 @@ class MangaTranslatorViewModel(application: Application) : AndroidViewModel(appl
     val isOfflineMode = MutableStateFlow(false) // Toggle between cloud Gemini or Offline/Sanal mapper
     val isDebugOverlayEnabled = MutableStateFlow(false) // Toggle debugging visual border boxes
     val selectedTargetLang = MutableStateFlow(TargetLanguage.TURKISH) // Selected target language for translations
+    val autoOfflineFallbackAlert = MutableStateFlow<String?>(null)
+
+    private fun hasInternetConnection(): Boolean {
+        val connectivityManager = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val network = connectivityManager.activeNetwork ?: return false
+            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
+            return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ||
+                    capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        } else {
+            @Suppress("DEPRECATION")
+            val networkInfo = connectivityManager.activeNetworkInfo ?: return false
+            @Suppress("DEPRECATION")
+            return networkInfo.isConnected
+        }
+    }
 
     fun translateLocalBitmap(bitmap: Bitmap) {
         viewModelScope.launch {
             _translationUiState.value = TranslationUiState.Loading("Görüntü analiz ediliyor (OCR)...")
             try {
+                var offlineModeToUse = isOfflineMode.value
+                if (!offlineModeToUse && !hasInternetConnection()) {
+                    val neededCodes = mutableSetOf<String>()
+                    when (selectedSourceLang.value) {
+                        SourceLanguage.JAPANESE -> neededCodes.add("ja")
+                        SourceLanguage.ENGLISH -> neededCodes.add("en")
+                        SourceLanguage.AUTO_DETECT -> {
+                            neededCodes.add("ja")
+                            neededCodes.add("en")
+                        }
+                    }
+                    neededCodes.add(selectedTargetLang.value.code)
+
+                    val undownloaded = languagePacks.value.filter { neededCodes.contains(it.code) && !it.isDownloaded }
+                    if (undownloaded.isEmpty()) {
+                        isOfflineMode.value = true
+                        offlineModeToUse = true
+                        autoOfflineFallbackAlert.value = "İnternet bulunamadı! Çevrimdışı dil paketleriniz kurulu olduğu için otomatik olarak Cihaz İçi Mod aktif edildi."
+                        Log.d("MangaTranslatorVM", "No internet. Auto fallbacked to on-device translation.")
+                    } else {
+                        val missingNames = undownloaded.joinToString(", ") { "${it.flag} ${it.name}" }
+                        _translationUiState.value = TranslationUiState.Error(
+                            "İnternet bağlantısı yok! Çevrimdışı çeviriyi başlatmak istedik ancak gerekli dil paketleri eksik: $missingNames.\n\nLütfen cihaz içi dil modellerini indirin veya internete bağlanıp tekrar deneyin."
+                        )
+                        return@launch
+                    }
+                }
+
                 // Perform translation
                 val result = pipeline.translateMangaPage(
                     inputBitmap = bitmap,
                     sourceLanguage = selectedSourceLang.value,
                     fontSizeMultiplier = fontSizeMultiplier.value,
-                    isOfflineMode = isOfflineMode.value,
+                    isOfflineMode = offlineModeToUse,
                     isDebugMode = isDebugOverlayEnabled.value,
                     targetLang = selectedTargetLang.value
                 )
@@ -209,7 +258,7 @@ class MangaTranslatorViewModel(application: Application) : AndroidViewModel(appl
                     } else {
                         if (selectedSourceLang.value == SourceLanguage.AUTO_DETECT) "İngilizce (Oto)" else "İngilizce"
                     }
-                    val offlineLabel = if (isOfflineMode.value) " (Sanal)" else ""
+                    val offlineLabel = if (offlineModeToUse) " (Çevrimdışı)" else ""
                     val entry = TranslationHistory(
                         title = "Manga Çevirisi$offlineLabel - ${result.textBlocksCount} Balon",
                         filePath = filePath,

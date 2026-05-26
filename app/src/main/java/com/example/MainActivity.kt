@@ -117,6 +117,21 @@ class MainActivity : ComponentActivity() {
             )
             startActivity(intent)
         } else {
+            // Request push notifications on Android 13+ to ensure visual icon & notification are shown
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (androidx.core.content.ContextCompat.checkSelfPermission(
+                        this,
+                        android.Manifest.permission.POST_NOTIFICATIONS
+                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                ) {
+                    androidx.core.app.ActivityCompat.requestPermissions(
+                        this,
+                        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                        102
+                    )
+                }
+            }
+
             val intent = Intent(this, OverlayService::class.java).apply {
                 action = OverlayService.ACTION_SHOW_WIDGET
             }
@@ -125,7 +140,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 startService(intent)
             }
-            Toast.makeText(this, "Yüzen Çeviri Servisi Başlatıldı!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Yüzen Çeviri Servisi Başlatıldı! Bildirim çubuğunda simgeyi görebilirsiniz.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -188,6 +203,15 @@ fun MangaTranslatorApp(
     val missingPacks = remember(languagePacks, neededPackCodes) {
         languagePacks.filter { pack ->
             neededPackCodes.contains(pack.code) && !pack.isDownloaded
+        }
+    }
+
+    val autoOfflineFallbackAlert by viewModel.autoOfflineFallbackAlert.collectAsState()
+
+    LaunchedEffect(autoOfflineFallbackAlert) {
+        autoOfflineFallbackAlert?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            viewModel.autoOfflineFallbackAlert.value = null
         }
     }
 
@@ -1028,6 +1052,303 @@ fun MangaTranslatorApp(
                                 }
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // --- CEVRIMDISI REHBER & HIZLI SOZLUK PANELI ---
+        var quickInputText by remember { mutableStateOf("") }
+        var quickTranslatedResult by remember { mutableStateOf("") }
+        var isQuickTranslating by remember { mutableStateOf(false) }
+        var quickSourceLang by remember { mutableStateOf(SourceLanguage.JAPANESE) }
+        var quickTargetLang by remember { mutableStateOf(TargetLanguage.TURKISH) }
+
+        val checkQuickMissing = remember(quickSourceLang, quickTargetLang, languagePacks) {
+            val needed = mutableSetOf<String>()
+            when (quickSourceLang) {
+                SourceLanguage.JAPANESE -> needed.add("ja")
+                SourceLanguage.ENGLISH -> needed.add("en")
+                SourceLanguage.AUTO_DETECT -> {
+                    needed.add("ja")
+                    needed.add("en")
+                }
+            }
+            needed.add(quickTargetLang.code)
+            languagePacks.filter { needed.contains(it.code) && !it.isDownloaded }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, Color(0xFF334155)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.MenuBook,
+                        contentDescription = "Quick Dictionary",
+                        tint = Color(0xFF00ADB5),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Pratik Çevrimdışı Sözlük & Hızlı Çeviri",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Manga içi el yazısı veya kelimeleri anlık sorgulayın (100% Çevrimdışı)",
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                }
+
+                // Selected Lang indicators and swap / toggles
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Source selection
+                    Box(modifier = Modifier.weight(1f)) {
+                        var expandedSrc by remember { mutableStateOf(false) }
+                        OutlinedButton(
+                            onClick = { expandedSrc = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            border = BorderStroke(1.dp, Color(0xFF334155)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "Kaynak: ${quickSourceLang.displayName}",
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = expandedSrc,
+                            onDismissRequest = { expandedSrc = false },
+                            modifier = Modifier.background(Color(0xFF1E293B))
+                        ) {
+                            SourceLanguage.values().forEach { lang ->
+                                DropdownMenuItem(
+                                    text = { Text(lang.displayName, color = Color.White) },
+                                    onClick = {
+                                        quickSourceLang = lang
+                                        expandedSrc = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    Icon(
+                        imageVector = Icons.Default.SwapHoriz,
+                        contentDescription = "Swap",
+                        tint = Color(0xFF00ADB5),
+                        modifier = Modifier.size(20.dp)
+                    )
+
+                    // Target selection
+                    Box(modifier = Modifier.weight(1f)) {
+                        var expandedTrg by remember { mutableStateOf(false) }
+                        OutlinedButton(
+                            onClick = { expandedTrg = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            border = BorderStroke(1.dp, Color(0xFF334155)),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = "Hedef: ${quickTargetLang.displayName}",
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = expandedTrg,
+                            onDismissRequest = { expandedTrg = false },
+                            modifier = Modifier.background(Color(0xFF1E293B))
+                        ) {
+                            TargetLanguage.values().forEach { lang ->
+                                DropdownMenuItem(
+                                    text = { Text(lang.displayName, color = Color.White) },
+                                    onClick = {
+                                        quickTargetLang = lang
+                                        expandedTrg = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (checkQuickMissing.isNotEmpty()) {
+                    Surface(
+                        color = Color(0xFF3B2512), // Warning orange/brown background for offline dictionary
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "⚠️ Eksik Dil Paketleri!",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFFFDBA74)
+                            )
+                            Text(
+                                text = "Sorgulama yapabilmek için ${checkQuickMissing.joinToString { it.name }} paketlerinin indirilmesi gerekir.",
+                                fontSize = 10.sp,
+                                color = Color(0xFFFFEDD5)
+                            )
+                            Button(
+                                onClick = {
+                                    checkQuickMissing.forEach { pack ->
+                                        viewModel.downloadLanguagePack(pack.code)
+                                    }
+                                    coroutineScope.launch {
+                                        scrollState.animateScrollTo(scrollState.maxValue)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                shape = RoundedCornerShape(4.dp),
+                                modifier = Modifier.align(Alignment.End).height(24.dp)
+                            ) {
+                                Text("Paketleri İndir", fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                // Input box
+                OutlinedTextField(
+                    value = quickInputText,
+                    onValueChange = { quickInputText = it },
+                    placeholder = { Text("Japonca veya İngilizce metin yazın/yapıştırın...", color = Color(0xFF64748B), fontSize = 12.sp) },
+                    modifier = Modifier.fillMaxWidth().height(90.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFF00ADB5),
+                        unfocusedBorderColor = Color(0xFF334155),
+                        focusedContainerColor = Color(0xFF0F172A),
+                        unfocusedContainerColor = Color(0xFF0F172A)
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    maxLines = 3,
+                    trailingIcon = {
+                        if (quickInputText.isNotEmpty()) {
+                            IconButton(onClick = { quickInputText = "" }) {
+                                Icon(Icons.Default.Clear, contentDescription = "Temizle", tint = Color(0xFF64748B))
+                            }
+                        }
+                    }
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "${quickInputText.length} Karakter",
+                        fontSize = 11.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+
+                    Button(
+                        onClick = {
+                            if (quickInputText.isBlank()) return@Button
+                            isQuickTranslating = true
+                            coroutineScope.launch {
+                                val cleanText = quickInputText.trim()
+                                try {
+                                    val results = com.example.api.OnDeviceTranslator.translate(
+                                        texts = listOf(cleanText),
+                                        source = quickSourceLang,
+                                        isActuallyJapanese = true,
+                                        target = quickTargetLang
+                                    )
+                                    quickTranslatedResult = results.firstOrNull() ?: "[Hata: Sonuç Boş]"
+                                } catch (e: Exception) {
+                                    quickTranslatedResult = "[Çeviri Hatası: ${e.localizedMessage}]"
+                                } finally {
+                                    isQuickTranslating = false
+                                }
+                            }
+                        },
+                        enabled = quickInputText.isNotBlank() && checkQuickMissing.isEmpty() && !isQuickTranslating,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00ADB5)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        if (isQuickTranslating) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Çevriliyor...", fontSize = 12.sp, color = Color.White)
+                        } else {
+                            Icon(Icons.Default.Translate, contentDescription = "Çevir", modifier = Modifier.size(14.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Sözlükte Çevir", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        }
+                    }
+                }
+
+                // Result Block representation
+                if (quickTranslatedResult.isNotEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF0F172A), RoundedCornerShape(12.dp))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(12.dp))
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Çevrimdışı Çeviri Sonucu:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF00ADB5)
+                            )
+                            IconButton(
+                                onClick = { quickTranslatedResult = "" },
+                                modifier = Modifier.size(18.dp)
+                            ) {
+                                Icon(Icons.Default.Close, contentDescription = "Kapat", tint = Color(0xFF64748B), modifier = Modifier.size(12.dp))
+                            }
+                        }
+                        Text(
+                            text = quickTranslatedResult,
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            lineHeight = 18.sp
+                        )
                     }
                 }
             }

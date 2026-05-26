@@ -107,16 +107,25 @@ class TranslationPipeline(private val context: Context) {
             val translatedText = translatedTexts.getOrNull(i) ?: block.text
 
             // Clear original text: Paint a matching bubble background color
-            // Standard manga speech bubbles are White/Cream. We can determine if we can use a custom background, or solid color.
-            canvas.drawRect(rect, maskPaint)
+            // Standard manga speech bubbles are White/Cream. We expand the mask bounds slightly outwards
+            // to ensure no letter edges/tailing pixels are left unmasked (Puffy Masking Expansion)
+            val padX = (rect.width() * 0.05f).coerceIn(5f, 15f).toInt()
+            val padY = (rect.height() * 0.05f).coerceIn(5f, 15f).toInt()
+            val expandedRect = Rect(
+                (rect.left - padX).coerceAtLeast(0),
+                (rect.top - padY).coerceAtLeast(0),
+                (rect.right + padX).coerceAtMost(inputBitmap.width),
+                (rect.bottom + padY).coerceAtMost(inputBitmap.height)
+            )
+            canvas.drawRect(expandedRect, maskPaint)
 
-            // Draw wrap-around translated text using StaticLayout
-            val padding = 6 // pixels
-            val availableWidth = (rect.width() - (padding * 2)).coerceAtLeast(30)
+            // Draw wrap-around translated text using StaticLayout with safe margins
+            val horizontalPadding = (rect.width() * 0.08f).coerceIn(4f, 16f).toInt()
+            val availableWidth = (rect.width() - (horizontalPadding * 2)).coerceAtLeast(40)
             val availableHeight = rect.height().coerceAtLeast(20)
 
             // Auto-scale font size to fit the bubble bounding box comfortably
-            var idealFontSize = (availableHeight * 0.25f * fontSizeMultiplier).coerceIn(16f, 55f)
+            var idealFontSize = (availableHeight * 0.23f * fontSizeMultiplier).coerceIn(16f, 52f)
             var staticLayout: StaticLayout
             
             // Iterative sizing to ensure it fits the box
@@ -135,16 +144,16 @@ class TranslationPipeline(private val context: Context) {
                     .setIncludePad(false)
                     .build()
 
-                if (staticLayout.height <= availableHeight || idealFontSize <= 12f) {
+                if (staticLayout.height <= availableHeight || idealFontSize <= 13f) {
                     break
                 }
-                idealFontSize -= 2f // Decrease size if text is too tall
-            } while (idealFontSize > 10f)
+                idealFontSize -= 1.5f // Decrease size if text is too tall
+            } while (idealFontSize > 11f)
 
             // Draw StaticLayout centered vertically inside the rectangle
             canvas.save()
             val verticalTranslation = rect.top + (rect.height() - staticLayout.height) / 2f
-            canvas.translate((rect.left + padding).toFloat(), verticalTranslation)
+            canvas.translate((rect.left + horizontalPadding).toFloat(), verticalTranslation)
             staticLayout.draw(canvas)
             canvas.restore()
 
