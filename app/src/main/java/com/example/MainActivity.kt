@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -61,6 +62,9 @@ import com.example.ui.MangaTranslatorViewModel
 import com.example.ui.TranslationUiState
 import com.example.ui.theme.MyApplicationTheme
 import com.example.utils.TranslationPipeline
+import com.example.utils.AppLogger
+import com.example.utils.LogLevel
+import com.example.utils.LogEntry
 import java.io.InputStream
 import kotlinx.coroutines.launch
 
@@ -208,6 +212,7 @@ fun MangaTranslatorApp(
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
     var showActiveResultDialog by remember { mutableStateOf<TranslationUiState.Success?>(null) }
     var viewHistoryItem by remember { mutableStateOf<TranslationHistory?>(null) }
+    var showLogsDialog by remember { mutableStateOf(false) }
 
     // Floating Overlay Toggle State Action Helper
     var localOverlayRunningState by remember { mutableStateOf(isOverlayRunning) }
@@ -276,12 +281,28 @@ fun MangaTranslatorApp(
                         lineHeight = 16.sp
                     )
                 }
-                Icon(
-                    imageVector = Icons.Default.Translate,
-                    contentDescription = "Translate Logo",
-                    tint = Color(0xFF00ADB5),
-                    modifier = Modifier.size(40.dp)
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    IconButton(
+                        onClick = { showLogsDialog = true },
+                        modifier = Modifier.size(44.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ReceiptLong,
+                            contentDescription = "Logları Görüntüle",
+                            tint = Color(0xFF00ADB5),
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Default.Translate,
+                        contentDescription = "Translate Logo",
+                        tint = Color(0xFF00ADB5),
+                        modifier = Modifier.size(36.dp)
+                    )
+                }
             }
         }
 
@@ -1568,6 +1589,10 @@ fun MangaTranslatorApp(
             }
         }
     }
+
+    if (showLogsDialog) {
+        SystemLogsDialog(onDismiss = { showLogsDialog = false })
+    }
 }
 
 @Composable
@@ -1715,6 +1740,288 @@ fun ZoomableImage(
                         translationX = offset.x,
                         translationY = offset.y
                     )
+            )
+        }
+    }
+}
+
+@Composable
+fun SystemLogsDialog(onDismiss: () -> Unit) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedLevel by remember { mutableStateOf<LogLevel?>(null) }
+    val logs by AppLogger.logs.collectAsState()
+    val context = LocalContext.current
+    val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+
+    val filteredLogs = remember(logs, searchQuery, selectedLevel) {
+        logs.filter { entry ->
+            val matchesSearch = entry.tag.contains(searchQuery, ignoreCase = true) ||
+                    entry.message.contains(searchQuery, ignoreCase = true)
+            val matchesLevel = selectedLevel == null || entry.level == selectedLevel
+            matchesSearch && matchesLevel
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color(0xFF0F172A)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Header Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF1E293B))
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Geri", tint = Color.White)
+                    }
+
+                    Text(
+                        text = "Sistem Günlükleri (Log)",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 18.sp,
+                        modifier = Modifier.weight(1f).padding(start = 8.dp)
+                    )
+
+                    // Copy action button
+                    IconButton(
+                        onClick = {
+                            if (filteredLogs.isEmpty()) {
+                                Toast.makeText(context, "Kopyalanacak log yok!", Toast.LENGTH_SHORT).show()
+                                return@IconButton
+                            }
+                            val textToCopy = filteredLogs.joinToString("\n") { entry ->
+                                "[${entry.formatTime()}] [${entry.level}] [${entry.tag}]: ${entry.message}"
+                            }
+                            clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(textToCopy))
+                            Toast.makeText(context, "Loglar panoya kopyalandı!", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Tümünü Kopyala", tint = Color(0xFF00ADB5))
+                    }
+
+                    // Trash Bin to clear
+                    IconButton(
+                        onClick = {
+                            AppLogger.clear()
+                            Toast.makeText(context, "Günlük temizlendi.", Toast.LENGTH_SHORT).show()
+                        }
+                    ) {
+                        Icon(imageVector = Icons.Default.DeleteSweep, contentDescription = "Logları Temizle", tint = Color(0xFFEF4444))
+                    }
+                }
+
+                // Controls & Filter Box
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF151F32))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Search Text Box
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Loglarda ara veya filtrele...", color = Color(0xFF64748B), fontSize = 13.sp) },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF00ADB5),
+                            unfocusedBorderColor = Color(0xFF334155),
+                            focusedContainerColor = Color(0xFF0F172A),
+                            unfocusedContainerColor = Color(0xFF0F172A)
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        singleLine = true,
+                        leadingIcon = {
+                            Icon(imageVector = Icons.Default.Search, contentDescription = "Ara", tint = Color(0xFF64748B), modifier = Modifier.size(18.dp))
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(imageVector = Icons.Default.Clear, contentDescription = "Temizle", tint = Color(0xFF64748B), modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    )
+
+                    // Log Levels Pills Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // All Pill
+                        FilterChip(
+                            selected = selectedLevel == null,
+                            onClick = { selectedLevel = null },
+                            label = { Text("Hepsi", fontSize = 11.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = Color(0xFF1E293B),
+                                labelColor = Color(0xFF94A3B8),
+                                selectedContainerColor = Color(0xFF00ADB5),
+                                selectedLabelColor = Color.White
+                            ),
+                            border = FilterChipDefaults.filterChipBorder(
+                                borderColor = Color(0xFF334155),
+                                selectedBorderColor = Color(0xFF00ADB5),
+                                enabled = true,
+                                selected = selectedLevel == null
+                            )
+                        )
+
+                        LogLevel.values().forEach { level ->
+                            val color = when (level) {
+                                LogLevel.ERROR -> Color(0xFFEF4444)
+                                LogLevel.WARN -> Color(0xFFF59E0B)
+                                LogLevel.INFO -> Color(0xFF3B82F6)
+                                LogLevel.DEBUG -> Color(0xFF10B981)
+                            }
+                            FilterChip(
+                                selected = selectedLevel == level,
+                                onClick = { selectedLevel = level },
+                                label = { Text(level.name, fontSize = 11.sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = Color(0xFF1E293B),
+                                    labelColor = color.copy(alpha = 0.8f),
+                                    selectedContainerColor = color,
+                                    selectedLabelColor = Color.White
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    borderColor = Color(0xFF334155),
+                                    selectedBorderColor = color,
+                                    enabled = true,
+                                    selected = selectedLevel == level
+                                )
+                            )
+                        }
+                    }
+                }
+
+                // Log Records List
+                if (filteredLogs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.Inbox,
+                                contentDescription = "Empty",
+                                tint = Color(0xFF334155),
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Arama kriterlerine uygun log bulunamadı.",
+                                color = Color(0xFF64748B),
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                } else {
+                    androidx.compose.foundation.lazy.LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentPadding = PaddingValues(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(filteredLogs) { log ->
+                            LogItemRow(log = log)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LogItemRow(log: LogEntry) {
+    val levelColor = when (log.level) {
+        LogLevel.ERROR -> Color(0xFFEF4444)
+        LogLevel.WARN -> Color(0xFFF59E0B)
+        LogLevel.INFO -> Color(0xFF3B82F6)
+        LogLevel.DEBUG -> Color(0xFF10B981)
+    }
+
+    val containerBg = when (log.level) {
+        LogLevel.ERROR -> Color(0xFF2D1616)
+        LogLevel.WARN -> Color(0xFF2D2316)
+        else -> Color(0xFF1E293B)
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = containerBg),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, if (log.level == LogLevel.ERROR) Color(0xFF7F1D1D) else Color(0xFF334155))
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Left hand Level tag and Timestamps
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Surface(
+                        color = levelColor,
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = log.level.name,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+
+                    Text(
+                        text = log.formatTime(),
+                        fontSize = 10.sp,
+                        color = Color(0xFF94A3B8),
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                // Tag Label right hand
+                Text(
+                    text = log.tag,
+                    fontSize = 10.sp,
+                    color = Color(0xFF00ADB5),
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Log Message Body
+            Text(
+                text = log.message,
+                color = Color.White,
+                fontSize = 11.5.sp,
+                fontFamily = FontFamily.Monospace,
+                lineHeight = 15.sp
             )
         }
     }

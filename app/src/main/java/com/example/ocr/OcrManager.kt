@@ -7,7 +7,7 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.graphics.Rect
-import android.util.Log
+import com.example.utils.AppLogger
 import com.example.api.SourceLanguage
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
@@ -15,6 +15,10 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeout
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 data class OcrBlock(
     val text: String,
@@ -26,8 +30,18 @@ data class OcrBlock(
 class OcrManager(context: Context) {
     private val appContext = context.applicationContext
 
-    fun determineLanguageAuto(bitmap: Bitmap): Boolean {
-        Log.d("OcrManager", "Initiating pre-pass text density & directionality layout analysis on source image...")
+    private suspend fun <T> awaitTask(task: com.google.android.gms.tasks.Task<T>): T = suspendCancellableCoroutine { continuation ->
+        task.addOnCompleteListener { completedTask ->
+            if (completedTask.isSuccessful) {
+                continuation.resume(completedTask.result)
+            } else {
+                continuation.resumeWithException(completedTask.exception ?: RuntimeException("Task failed without exception"))
+            }
+        }
+    }
+
+    suspend fun determineLanguageAuto(bitmap: Bitmap): Boolean {
+        AppLogger.d("OcrManager", "Initiating pre-pass text density & directionality layout analysis on source image...")
         val safeBitmap = if (bitmap.config == Bitmap.Config.HARDWARE) {
             bitmap.copy(Bitmap.Config.ARGB_8888, false)
         } else {
@@ -36,11 +50,13 @@ class OcrManager(context: Context) {
         val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
         val image = InputImage.fromBitmap(safeBitmap, 0)
         return try {
-            val result = Tasks.await(recognizer.process(image))
+            val result = withTimeout(8000) {
+                awaitTask(recognizer.process(image))
+            }
             
             val totalBlocks = result.textBlocks.size
             if (totalBlocks == 0) {
-                Log.d("OcrManager", "No text detected in pre-pass layout scan. Defaulting to Japanese mode.")
+                AppLogger.d("OcrManager", "No text detected in pre-pass layout scan. Defaulting to Japanese mode.")
                 return true
             }
 
@@ -113,14 +129,14 @@ class OcrManager(context: Context) {
             val textCoverageRatio = totalBlockArea.toDouble() / totalImgArea.toDouble()
             val charDensityPerUnitArea = if (totalBlockArea > 0) (totalCharacters.toDouble() / totalBlockArea.toDouble()) * 1000.0 else 0.0
 
-            Log.d("OcrManager", "--- Otomatik Tespit (Auto-Detect) Metrics ---")
-            Log.d("OcrManager", "Total blocks: $totalBlocks, Total characters: $totalCharacters")
-            Log.d("OcrManager", "Alphabetic ratio (Letters / Total): ${String.format("%.3f", alphaRatio)} (English target is high, Japanese target is low due to garbage Latin translations)")
-            Log.d("OcrManager", "Space ratio (Spaces / Total): ${String.format("%.3f", spaceRatio)} (English target is ~0.15, Japanese is < 0.05)")
-            Log.d("OcrManager", "Block Directionality: Vertical=$verticalBlockCount, Horizontal=$horizontalBlockCount, Square=$squareBlockCount (Ratio Vert=${String.format("%.2f", verticalBlockRatio)})")
-            Log.d("OcrManager", "Line Directionality: Vertical=$verticalLineCount, Horizontal=$horizontalLineCount (Ratio Vert=${String.format("%.2f", verticalLineRatio)})")
-            Log.d("OcrManager", "Text area coverage ratio: ${String.format("%.4f", textCoverageRatio)}")
-            Log.d("OcrManager", "Character spatial packing density: ${String.format("%.4f", charDensityPerUnitArea)}")
+            AppLogger.d("OcrManager", "--- Otomatik Tespit (Auto-Detect) Metrics ---")
+            AppLogger.d("OcrManager", "Total blocks: $totalBlocks, Total characters: $totalCharacters")
+            AppLogger.d("OcrManager", "Alphabetic ratio (Letters / Total): ${String.format("%.3f", alphaRatio)} (English target is high, Japanese target is low due to garbage Latin translations)")
+            AppLogger.d("OcrManager", "Space ratio (Spaces / Total): ${String.format("%.3f", spaceRatio)} (English target is ~0.15, Japanese is < 0.05)")
+            AppLogger.d("OcrManager", "Block Directionality: Vertical=$verticalBlockCount, Horizontal=$horizontalBlockCount, Square=$squareBlockCount (Ratio Vert=${String.format("%.2f", verticalBlockRatio)})")
+            AppLogger.d("OcrManager", "Line Directionality: Vertical=$verticalLineCount, Horizontal=$horizontalLineCount (Ratio Vert=${String.format("%.2f", verticalLineRatio)})")
+            AppLogger.d("OcrManager", "Text area coverage ratio: ${String.format("%.4f", textCoverageRatio)}")
+            AppLogger.d("OcrManager", "Character spatial packing density: ${String.format("%.4f", charDensityPerUnitArea)}")
 
             // Core Decision Model for Manga Layout (Weighted voting based on directionality + textual features)
             var japaneseScore = 0
@@ -146,10 +162,10 @@ class OcrManager(context: Context) {
 
             // Final evaluation
             val isJapanese = japaneseScore >= 2
-            Log.d("OcrManager", "Decision logic score table: JapaneseScore=$japaneseScore -> Result: isJapanese=$isJapanese")
+            AppLogger.d("OcrManager", "Decision logic score table: JapaneseScore=$japaneseScore -> Result: isJapanese=$isJapanese")
             isJapanese
         } catch (e: Exception) {
-            Log.e("OcrManager", "Auto-language detection failed: ${e.message}", e)
+            AppLogger.e("OcrManager", "Auto-language detection failed: ${e.message}", e)
             true // Fallback to Japanese by default for manga reader app
         } finally {
             recognizer.close()
@@ -157,7 +173,7 @@ class OcrManager(context: Context) {
     }
 
     fun preprocessBitmapForOcr(src: Bitmap): Bitmap {
-        Log.d("OcrManager", "Applying grayscale high-contrast pre-processing for better OCR...")
+        AppLogger.d("OcrManager", "Applying grayscale high-contrast pre-processing for better OCR...")
         val safeSrc = if (src.config == Bitmap.Config.HARDWARE) {
             src.copy(Bitmap.Config.ARGB_8888, false)
         } else {
@@ -211,7 +227,7 @@ class OcrManager(context: Context) {
 
     fun mergeProximityBlocks(blocks: List<OcrBlock>, isJapanese: Boolean): List<OcrBlock> {
         if (blocks.size < 2) return blocks
-        Log.d("OcrManager", "Running bubble proximity clustering on ${blocks.size} blocks...")
+        AppLogger.d("OcrManager", "Running bubble proximity clustering on ${blocks.size} blocks...")
 
         val n = blocks.size
         val visited = BooleanArray(n) { false }
@@ -354,7 +370,7 @@ class OcrManager(context: Context) {
                 )
             )
         }
-        Log.d("OcrManager", "Bubble proximity clustering completed. Reduced from ${blocks.size} to ${mergedList.size} blocks.")
+        AppLogger.d("OcrManager", "Bubble proximity clustering completed. Reduced from ${blocks.size} to ${mergedList.size} blocks.")
         return mergedList
     }
 
@@ -370,12 +386,12 @@ class OcrManager(context: Context) {
         return xDistance <= thresholdX && yDistance <= thresholdY
     }
 
-    fun detectText(bitmap: Bitmap, sourceLanguage: SourceLanguage, includeFiltered: Boolean = false): Pair<List<OcrBlock>, Boolean> {
+    suspend fun detectText(bitmap: Bitmap, sourceLanguage: SourceLanguage, includeFiltered: Boolean = false): Pair<List<OcrBlock>, Boolean> {
         val isJapanese = when (sourceLanguage) {
             SourceLanguage.JAPANESE -> true
             SourceLanguage.ENGLISH -> false
             SourceLanguage.AUTO_DETECT -> {
-                Log.d("OcrManager", "Auto-detect selected. Running quick pre-pass character density check...")
+                AppLogger.d("OcrManager", "Auto-detect selected. Running quick pre-pass character density check...")
                 determineLanguageAuto(bitmap)
             }
         }
@@ -390,7 +406,9 @@ class OcrManager(context: Context) {
         val processedBitmap = preprocessBitmapForOcr(bitmap)
         val image = InputImage.fromBitmap(processedBitmap, 0)
         return try {
-            val result = Tasks.await(recognizer.process(image))
+            val result = withTimeout(12000) {
+                awaitTask(recognizer.process(image))
+            }
             val rawBlocks = mutableListOf<OcrBlock>()
 
             var totalDetected = 0
@@ -430,7 +448,7 @@ class OcrManager(context: Context) {
                             isNoise -> "Çizgi/SFX Gürültüsü"
                             else -> "Bilinmeyen"
                         }
-                        Log.d("OcrManager", "Filtered out non-speech-bubble block: '$text' (w=$w, h=$h, ratio=${String.format("%.2f", ratio)}, area=$area, reason=$reason)")
+                        AppLogger.d("OcrManager", "Filtered out non-speech-bubble block: '$text' (w=$w, h=$h, ratio=${String.format("%.2f", ratio)}, area=$area, reason=$reason)")
                         if (includeFiltered) {
                             rawBlocks.add(OcrBlock(text = text, boundingBox = rect, isFiltered = true, filterReason = reason))
                         }
@@ -454,10 +472,10 @@ class OcrManager(context: Context) {
                 mergedAcceptedList
             }
 
-            Log.d("OcrManager", "Successfully detected and filtered blocks: $totalDetected found, ${finalBlocks.size} merged & kept after speech bubble filtering. Used isJapanese=$isJapanese")
+            AppLogger.d("OcrManager", "Successfully detected and filtered blocks: $totalDetected found, ${finalBlocks.size} merged & kept after speech bubble filtering. Used isJapanese=$isJapanese")
             Pair(finalBlocks, isJapanese)
         } catch (e: Exception) {
-            Log.e("OcrManager", "OCR detection failed: ${e.message}", e)
+            AppLogger.e("OcrManager", "OCR detection failed: ${e.message}", e)
             Pair(emptyList(), isJapanese)
         } finally {
             recognizer.close()

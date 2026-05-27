@@ -19,6 +19,7 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
 import android.widget.Toast
+import com.example.utils.AppLogger
 import java.nio.ByteBuffer
 
 class ScreenCaptureActivity : Activity() {
@@ -36,6 +37,7 @@ class ScreenCaptureActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLogger.i(TAG, "onCreate: Ekran yakalama aktivitesi başlatılıyor.")
 
         // Make the activity as invisible/unobtrousive as possible
         window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
@@ -44,16 +46,18 @@ class ScreenCaptureActivity : Activity() {
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         
         if (mediaProjectionManager == null) {
+            AppLogger.e(TAG, "onCreate: Medya Projeksiyon yöneticisi bulunamadı!")
             Toast.makeText(this, "Ekran yakalama servisi bu cihazda desteklenmiyor.", Toast.LENGTH_SHORT).show()
             finish()
             return
         }
 
         try {
+            AppLogger.i(TAG, "onCreate: Medya projeksiyon izin diyaloğu talep ediliyor.")
             val captureIntent = mediaProjectionManager!!.createScreenCaptureIntent()
             startActivityForResult(captureIntent, REQUEST_CODE_SCREEN_CAPTURE)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start media projection permission request picker.", e)
+            AppLogger.e(TAG, "Failed to start media projection permission request picker.", e)
             Toast.makeText(this, "Ekran yakalama izni başlatılamadı: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
             finish()
         }
@@ -64,10 +68,12 @@ class ScreenCaptureActivity : Activity() {
 
         if (requestCode == REQUEST_CODE_SCREEN_CAPTURE) {
             if (resultCode == RESULT_OK && data != null) {
+                AppLogger.i(TAG, "onActivityResult: Ekran yakalama izni VERİLDİ. Çeviri başlatılıyor.")
                 // Pre-inform user so they know details are being parsed in background
                 Toast.makeText(this, "Çeviri başlatılıyor, lütfen bekleyin...", Toast.LENGTH_SHORT).show()
                 startScreenCapture(resultCode, data)
             } else {
+                AppLogger.w(TAG, "onActivityResult: Ekran yakalama izni kullanıcı tarafından iptal edildi veya reddedildi.")
                 Toast.makeText(this, "Ekran yakalama izni iptal edildi.", Toast.LENGTH_SHORT).show()
                 finish()
             }
@@ -76,6 +82,7 @@ class ScreenCaptureActivity : Activity() {
 
     private fun startScreenCapture(resultCode: Int, data: Intent) {
         try {
+            AppLogger.i(TAG, "startScreenCapture: Servisin medya projeksiyon tipine yükseltilmesi isteniyor action=START_MEDIA_PROJECTION")
             // Inform OverlayService to elevate foreground service type to media projection first
             val startFgsIntent = Intent(this, OverlayService::class.java).apply {
                 action = OverlayService.ACTION_START_MEDIA_PROJECTION
@@ -84,6 +91,7 @@ class ScreenCaptureActivity : Activity() {
 
             mediaProjection = mediaProjectionManager?.getMediaProjection(resultCode, data)
             if (mediaProjection == null) {
+                AppLogger.e(TAG, "startScreenCapture: MediaProjection nesnesi null döndü, yakalama duruyor!")
                 Toast.makeText(this, "Medya projeksiyonu başlatılamadı.", Toast.LENGTH_SHORT).show()
                 cleanupAndFinish()
                 return
@@ -102,6 +110,8 @@ class ScreenCaptureActivity : Activity() {
             val height = metrics.heightPixels
             val density = metrics.densityDpi
 
+            AppLogger.i(TAG, "startScreenCapture: Sanal ekran kuruluyor ($width x $height @ $density dpi)")
+
             // Setup image reader to pull current frame
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
             
@@ -117,16 +127,23 @@ class ScreenCaptureActivity : Activity() {
                 null
             )
 
+            AppLogger.i(TAG, "startScreenCapture: ImageAvailableListener dinleyicisi ekleniyor, bir kare bekleniyor...")
+
             // Listen for first available image frame
             imageReader!!.setOnImageAvailableListener({ reader ->
                 try {
-                    val image = reader.acquireLatestImage()
+                    AppLogger.d(TAG, "setOnImageAvailableListener: Yeni bir ekran karesi algılandı!")
+                    var image = reader.acquireLatestImage()
+                    if (image == null) {
+                        image = reader.acquireNextImage()
+                    }
                     if (image != null) {
+                        AppLogger.d(TAG, "setOnImageAvailableListener: Ekran karesi başarıyla okundu.")
                         val bitmap = convertImageToBitmap(image, width, height)
                         image.close()
 
                         if (bitmap != null) {
-                            Log.d(TAG, "Screen captured successfully! Width: ${bitmap.width}, Height: ${bitmap.height}")
+                            AppLogger.i(TAG, "setOnImageAvailableListener: Ekran karesi Bitmap'e dönüştürüldü (Genişlik: ${bitmap.width}, Yükseklik: ${bitmap.height})")
                             
                             // Send captured bitmap to OverlayService
                             OverlayService.setCapturedBitmap(bitmap)
@@ -137,27 +154,34 @@ class ScreenCaptureActivity : Activity() {
                             }
                             startService(serviceIntent)
                         } else {
-                            Log.e(TAG, "Converted screen capture bitmap turned out null.")
+                            AppLogger.e(TAG, "setOnImageAvailableListener: Ekran karesi Bitmap'e DÖNÜŞTÜRÜLEMEDİ.")
                         }
 
                         // Stop projection & clean up resources immediately
                         cleanupAndFinish()
+                    } else {
+                        AppLogger.w(TAG, "setOnImageAvailableListener: acquireLatestImage() ve acquireNextImage() null döndü.")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error acquiring image from reader: ${e.message}", e)
+                    AppLogger.e(TAG, "setOnImageAvailableListener: Hata oluştu!", e)
                     cleanupAndFinish()
                 }
             }, handler)
 
-            // Safety timeout fallback (e.g. 4 seconds) to prevent infinite activity freeze
+            // Safety timeout fallback (e.g. 4 * 1000 ms) to prevent infinite activity freeze
             handler.postDelayed({
                 if (imageReader != null) {
+                    val warnMsg = "Ekran karesi alınamadı! Statik optimizasyon nedeniyle olabilir. Lütfen ekranı hafifçe kaydırıp veya dokunup tekrar deneyin."
+                    AppLogger.w(TAG, "startScreenCapture Fallback: 4 saniye içinde ekran karesi alınamadı, zaman aşımı tetiklendi!")
+                    runOnUiThread {
+                        Toast.makeText(applicationContext, warnMsg, Toast.LENGTH_LONG).show()
+                    }
                     cleanupAndFinish()
                 }
             }, 4005)
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed during screen capture initialization: ${e.message}", e)
+            AppLogger.e(TAG, "Failed during screen capture initialization: ${e.message}", e)
             cleanupAndFinish()
         }
     }

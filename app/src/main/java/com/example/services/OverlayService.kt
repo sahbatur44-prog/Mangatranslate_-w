@@ -10,7 +10,7 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
-import android.util.Log
+import com.example.utils.AppLogger
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -98,7 +98,7 @@ class OverlayService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            Log.e("OverlayService", "Failed to update foreground service type to $useMediaProjection: ${e.message}", e)
+            AppLogger.e("OverlayService", "Failed to update foreground service type to $useMediaProjection: ${e.message}", e)
         }
     }
 
@@ -204,7 +204,7 @@ class OverlayService : Service() {
                             try {
                                 windowManager.updateViewLayout(floatingView, params)
                             } catch (e: Exception) {
-                                Log.e("OverlayService", "Failed to update layout parameters", e)
+                                AppLogger.e("OverlayService", "Failed to update layout parameters", e)
                             }
                             return true
                         }
@@ -222,12 +222,12 @@ class OverlayService : Service() {
             try {
                 windowManager.addView(floatingView, params)
                 isFloatingWidgetVisible = true
-                Log.d("OverlayService", "Floating widget spawned successfully.")
+                AppLogger.d("OverlayService", "Floating widget spawned successfully.")
             } catch (e: Exception) {
-                Log.e("OverlayService", "Failed to add floating view to WindomManager: ${e.message}", e)
+                AppLogger.e("OverlayService", "Failed to add floating view to WindomManager: ${e.message}", e)
             }
         } catch (e: Exception) {
-            Log.e("OverlayService", "Failed to create floating overlay layout: ${e.message}", e)
+            AppLogger.e("OverlayService", "Failed to create floating overlay layout: ${e.message}", e)
             Toast.makeText(this, "Yüzen overlay başlatılamadı! Lütfen izinleri kontrol edin.", Toast.LENGTH_LONG).show()
         }
     }
@@ -241,7 +241,7 @@ class OverlayService : Service() {
         }
         val now = System.currentTimeMillis()
         if (now - lastTriggerTime < 1500) {
-            Log.d("OverlayService", "Debounced screen capture request to avoid overlapping triggers.")
+            AppLogger.d("OverlayService", "Debounced screen capture request to avoid overlapping triggers.")
             return
         }
         lastTriggerTime = now
@@ -289,24 +289,37 @@ class OverlayService : Service() {
 
                 val pipeline = TranslationPipeline(this@OverlayService)
                 
-                val result = pipeline.translateMangaPage(
-                    inputBitmap = bitmap,
-                    sourceLanguage = sourceLang,
-                    fontSizeMultiplier = fontSizeMultiplier,
-                    isOfflineMode = isOfflineMode,
-                    isDebugMode = isDebugOverlayEnabled,
-                    targetLang = targetLang
-                )
+                val result = kotlinx.coroutines.withTimeoutOrNull(25000) {
+                    pipeline.translateMangaPage(
+                        inputBitmap = bitmap,
+                        sourceLanguage = sourceLang,
+                        fontSizeMultiplier = fontSizeMultiplier,
+                        isOfflineMode = isOfflineMode,
+                        isDebugMode = isDebugOverlayEnabled,
+                        targetLang = targetLang
+                    )
+                }
 
-                if (result.textBlocksCount == 0) {
+                if (result == null) {
                     hideLoadingOverlay()
-                    Toast.makeText(applicationContext, "Ekran üzerinde çevrilecek metin tespit edilemedi!", Toast.LENGTH_LONG).show()
+                    val errorDetail = if (!isOfflineMode) {
+                        "Çeviri işlemi zaman aşımına uğradı! Lütfen internet bağlantınızı kontrol edin veya Ayarlardan 'Çevrimdışı/Hızlı Çeviri' modunu seçip tekrar deneyin."
+                    } else {
+                        "Cihaz içi OCR işlemi zaman aşımına uğradı! Google Play Hizmetlerinin yüklü ve güncel olduğundan emin olun."
+                    }
+                    Toast.makeText(applicationContext, errorDetail, Toast.LENGTH_LONG).show()
+                    AppLogger.w("OverlayService", "Manga page translation timed out (> 25 seconds). Dismissing overlay.")
                 } else {
-                    hideLoadingOverlay()
-                    showTranslationResultOverlay(result)
+                    if (result.textBlocksCount == 0) {
+                        hideLoadingOverlay()
+                        Toast.makeText(applicationContext, "Ekran üzerinde çevrilecek metin tespit edilemedi!", Toast.LENGTH_LONG).show()
+                    } else {
+                        hideLoadingOverlay()
+                        showTranslationResultOverlay(result)
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("OverlayService", "Background page translation failed", e)
+                AppLogger.e("OverlayService", "Background page translation failed", e)
                 hideLoadingOverlay()
                 Toast.makeText(applicationContext, "Çeviri hatası: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
             } finally {
@@ -375,7 +388,7 @@ class OverlayService : Service() {
 
             windowManager.addView(loadingOverlay, params)
         } catch (e: Exception) {
-            Log.e("OverlayService", "Failed to show loading overlay", e)
+            AppLogger.e("OverlayService", "Failed to show loading overlay", e)
         }
     }
 
@@ -384,7 +397,7 @@ class OverlayService : Service() {
             try {
                 windowManager.removeView(it)
             } catch (e: Exception) {
-                Log.e("OverlayService", "Error removing loading overlay", e)
+                AppLogger.e("OverlayService", "Error removing loading overlay", e)
             }
             loadingOverlay = null
         }
@@ -552,10 +565,10 @@ class OverlayService : Service() {
             try {
                 windowManager.addView(translationResultOverlay, params)
             } catch (e: Exception) {
-                Log.e("OverlayService", "Failed to add translation layout to WindowManager", e)
+                AppLogger.e("OverlayService", "Failed to add translation layout to WindowManager", e)
             }
         } catch (e: Exception) {
-            Log.e("OverlayService", "Failed to display full screen translation overlay", e)
+            AppLogger.e("OverlayService", "Failed to display full screen translation overlay", e)
         }
     }
 
@@ -641,7 +654,7 @@ class OverlayService : Service() {
                 it.setOnKeyListener(null)
                 windowManager.removeView(it)
             } catch (e: Exception) {
-                Log.e("OverlayService", "Error removing translation overlay", e)
+                AppLogger.e("OverlayService", "Error removing translation overlay", e)
             }
             translationResultOverlay = null
         }
@@ -654,7 +667,7 @@ class OverlayService : Service() {
                     it.setOnTouchListener(null)
                     windowManager.removeView(it)
                 } catch (e: Exception) {
-                    Log.e("OverlayService", "Error removing overlay view: ${e.message}")
+                    AppLogger.e("OverlayService", "Error removing overlay view: ${e.message}")
                 }
                 floatingView = null
                 isFloatingWidgetVisible = false
